@@ -1,0 +1,15 @@
+[package]
+name = "uno"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+uno_core = { path = "../uno_core" }
+uno_net = { path = "../uno_net" }
+uno_protocol = { path = "../uno_protocol" }
+uno_room = { path = "../uno_room" }
+
+[lints]
+workspace = true
+

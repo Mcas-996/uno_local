@@ -1,0 +1,12 @@
+[package]
+name = "uno_net"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+uno_protocol = { path = "../uno_protocol" }
+
+[lints]
+workspace = true
+
