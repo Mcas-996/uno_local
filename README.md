@@ -327,7 +327,7 @@ Traffic is plaintext by design for this first version.
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 only. See [LICENSE](LICENSE).
+This project is licensed under the GNU Affero General Public License v3.0 only. See [LICENSE](LICENSE).
 
 ## Roadmap
 
