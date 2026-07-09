@@ -325,6 +325,10 @@ Current non-goals:
 
 Traffic is plaintext by design for this first version.
 
+## License
+
+This project is licensed under the GNU General Public License v3.0 only. See [LICENSE](LICENSE).
+
 ## Roadmap
 
 Remaining work tracked in OpenSpec includes:
