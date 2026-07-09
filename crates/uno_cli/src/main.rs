@@ -73,7 +73,7 @@ fn host(args: &[String]) -> Result<(), String> {
     }
 
     let mut room = Room::create(room_id, peer_id, options.name);
-    interactive_session(&mut room, true)
+    interactive_session(&mut room, true, options.debug)
 }
 
 fn join(args: &[String]) -> Result<(), String> {
@@ -102,8 +102,19 @@ fn join(args: &[String]) -> Result<(), String> {
     }
 }
 
-fn interactive_session(room: &mut Room, local_active_host: bool) -> Result<(), String> {
-    println!("commands: ready, start, state, hand, play <color> <rank>, draw, pass, leave");
+fn interactive_session(
+    room: &mut Room,
+    local_active_host: bool,
+    debug: bool,
+) -> Result<(), String> {
+    if debug {
+        println!("debug mode: single-player start is enabled");
+        println!(
+            "commands: ready, start, state, hand, play <player> <color> <rank>, draw, pass, leave"
+        );
+    } else {
+        println!("commands: ready, start, state, hand, play <color> <rank>, draw, pass, leave");
+    }
     let mut line = String::new();
     loop {
         print!("uno> ");
@@ -125,17 +136,22 @@ fn interactive_session(room: &mut Room, local_active_host: bool) -> Result<(), S
             println!("left room");
             return Ok(());
         }
-        if let Err(error) = handle_interactive(room, input, local_active_host) {
+        if let Err(error) = handle_interactive(room, input, local_active_host, debug) {
             println!("{error}");
         }
     }
 }
 
-fn handle_interactive(room: &mut Room, input: &str, local_active_host: bool) -> Result<(), String> {
+fn handle_interactive(
+    room: &mut Room,
+    input: &str,
+    local_active_host: bool,
+    debug: bool,
+) -> Result<(), String> {
     let Some(host) = room.active_host().map(|member| member.peer_id.clone()) else {
         return Err("room has no active host".to_owned());
     };
-    let player = PlayerId::new(host.0.clone());
+    let host_player = PlayerId::new(host.0.clone());
     let parts: Vec<_> = input.split_whitespace().collect();
     match parts.first().copied() {
         Some("ready") => {
@@ -147,30 +163,55 @@ fn handle_interactive(room: &mut Room, input: &str, local_active_host: bool) -> 
             if !local_active_host {
                 return Err("only the active host can start the local debug room".to_owned());
             }
-            room.start_game(&host).map_err(|error| error.to_string())?;
+            if debug {
+                room.start_debug_game(&host)
+                    .map_err(|error| error.to_string())?;
+            } else {
+                room.start_game(&host).map_err(|error| error.to_string())?;
+            }
             println!("game started");
         }
         Some("state") => println!("{:?}", room.public_game_state()),
         Some("hand") => println!("hand display is available after remote player state sync"),
         Some("draw") => {
             let event = room
-                .submit_command(&host, Command::Draw { player })
+                .submit_command(
+                    &host,
+                    Command::Draw {
+                        player: host_player,
+                    },
+                )
                 .map_err(|error| error.to_string())?;
             println!("event {:?}", event.kind);
         }
         Some("pass") => {
             let event = room
-                .submit_command(&host, Command::Pass { player })
+                .submit_command(
+                    &host,
+                    Command::Pass {
+                        player: host_player,
+                    },
+                )
                 .map_err(|error| error.to_string())?;
             println!("event {:?}", event.kind);
         }
         Some("play") => {
+            if (debug && parts.len() < 4) || (!debug && parts.len() < 3) {
+                return Err(play_usage(debug));
+            }
+            let (player, color_index, rank_index) = if debug {
+                let player =
+                    PlayerId::new(parts.get(1).ok_or_else(|| play_usage(debug))?.to_string());
+                (player, 2, 3)
+            } else {
+                (host_player, 1, 2)
+            };
             let color: Color = parts
-                .get(1)
-                .ok_or_else(|| "usage: play <color> <rank>".to_owned())?
+                .get(color_index)
+                .ok_or_else(|| play_usage(debug))?
                 .parse()
                 .map_err(|error| format!("{error}"))?;
-            let rank = parse_rank(parts.get(2).copied().unwrap_or(""))?;
+            let rank = parse_rank(parts.get(rank_index).copied().unwrap_or(""))?;
             let card = if matches!(rank, Rank::Wild | Rank::WildDrawFour) {
                 Card::wild(rank)
             } else {
@@ -194,6 +235,14 @@ fn handle_interactive(room: &mut Room, input: &str, local_active_host: bool) -> 
     Ok(())
 }
 
+fn play_usage(debug: bool) -> String {
+    if debug {
+        "usage: play <player> <color> <rank>".to_owned()
+    } else {
+        "usage: play <color> <rank>".to_owned()
+    }
+}
+
 fn parse_rank(value: &str) -> Result<Rank, String> {
     match value {
         "skip" => Ok(Rank::Skip),
@@ -210,7 +259,7 @@ fn parse_rank(value: &str) -> Result<Rank, String> {
 
 fn print_help() {
     println!(
-        "uno host [--name NAME] [--port PORT] [--room ROOM] [--peer PEER] [--stun ADDR] [--no-stun] [--forwarded IP:PORT]"
+        "uno host [--name NAME] [--port PORT] [--room ROOM] [--peer PEER] [--stun ADDR] [--no-stun] [--forwarded IP:PORT] [--debug]"
     );
     println!("uno join <share> [--name NAME] [--peer PEER]");
 }
@@ -240,6 +289,7 @@ struct HostOptions {
     stun_servers: Vec<String>,
     no_stun: bool,
     forwarded: Option<SocketAddr>,
+    debug: bool,
 }
 
 impl HostOptions {
@@ -252,6 +302,7 @@ impl HostOptions {
             stun_servers: StunConfig::default().servers,
             no_stun: false,
             forwarded: None,
+            debug: false,
         };
         let mut index = 0;
         while index < args.len() {
@@ -283,6 +334,7 @@ impl HostOptions {
                         .push(args.get(index).ok_or("--stun requires a value")?.clone());
                 }
                 "--no-stun" => options.no_stun = true,
+                "--debug" => options.debug = true,
                 "--forwarded" => {
                     index += 1;
                     options.forwarded = Some(
@@ -351,6 +403,14 @@ mod tests {
         assert_eq!(options.name, "Alice");
         assert_eq!(options.port, 34567);
         assert!(options.no_stun);
+        assert!(!options.debug);
+    }
+
+    #[test]
+    fn host_options_parse_debug() {
+        let args = vec!["--debug".to_owned()];
+        let options = HostOptions::parse(&args).unwrap();
+        assert!(options.debug);
     }
 
     #[test]
@@ -362,9 +422,26 @@ mod tests {
     fn invalid_interactive_command_is_safe() {
         let mut room = Room::create(RoomId::new("room"), PeerId::new("host"), "Host".to_owned());
         assert!(
-            handle_interactive(&mut room, "bad", true)
+            handle_interactive(&mut room, "bad", true, false)
                 .unwrap_err()
                 .contains("invalid command")
+        );
+    }
+
+    #[test]
+    fn debug_start_accepts_single_host() {
+        let mut room = Room::create(RoomId::new("room"), PeerId::new("host"), "Host".to_owned());
+        handle_interactive(&mut room, "start", true, true).unwrap();
+        assert!(room.public_game_state().is_some());
+    }
+
+    #[test]
+    fn debug_play_requires_player() {
+        let mut room = Room::create(RoomId::new("room"), PeerId::new("host"), "Host".to_owned());
+        handle_interactive(&mut room, "start", true, true).unwrap();
+        assert_eq!(
+            handle_interactive(&mut room, "play red 5", true, true).unwrap_err(),
+            "usage: play <player> <color> <rank>"
         );
     }
 }

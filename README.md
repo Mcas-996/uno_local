@@ -56,6 +56,22 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 On this codebase, the test suite covers gameplay, protocol parsing, local UDP handshakes, fallback behavior, host failover, and CLI parsing.
 
+## Release Distribution
+
+Releases are configured with `cargo-dist` and GitHub Releases. Push a version tag such as `v0.1.0` to build and publish release artifacts.
+
+Unix install:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Mcas-996/uno_online/releases/latest/download/uno-installer.sh | sh
+```
+
+Windows PowerShell install:
+
+```powershell
+irm https://github.com/Mcas-996/uno_online/releases/latest/download/uno-installer.ps1 | iex
+```
+
 ## Running the CLI
 
 Show help:
@@ -90,6 +106,12 @@ Local debug mode without STUN:
 cargo run -p uno -- host --name Alice --no-stun
 ```
 
+Single-player debug mode:
+
+```powershell
+cargo run -p uno -- host --name Alice --peer alice --no-stun --debug
+```
+
 Host with manual UDP port forwarding:
 
 ```powershell
@@ -118,6 +140,14 @@ play blue skip
 play green reverse
 play red wild
 leave
+```
+
+In `--debug` mode, `start` is allowed with one connected player and `play` requires an explicit player id:
+
+```text
+play alice red 5
+play alice blue skip
+play alice red wild
 ```
 
 The prompt is currently useful for validating local room/gameplay behavior. Full remote command forwarding from joiners to the active host is a remaining implementation task.

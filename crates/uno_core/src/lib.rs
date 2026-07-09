@@ -241,7 +241,17 @@ impl Game {
         if !(MIN_PLAYERS..=MAX_PLAYERS_V1).contains(&players.len()) {
             return Err(GameError::InvalidPlayerCount(players.len()));
         }
+        Self::new_unchecked(players)
+    }
 
+    pub fn new_debug(players: Vec<(PlayerId, String)>) -> Result<Self, GameError> {
+        if !(1..=MAX_PLAYERS_V1).contains(&players.len()) {
+            return Err(GameError::InvalidPlayerCount(players.len()));
+        }
+        Self::new_unchecked(players)
+    }
+
+    fn new_unchecked(players: Vec<(PlayerId, String)>) -> Result<Self, GameError> {
         let mut seen = BTreeSet::new();
         for (id, _) in &players {
             if !seen.insert(id.clone()) {
@@ -567,6 +577,13 @@ mod tests {
             Game::new(players(6)).unwrap_err(),
             GameError::InvalidPlayerCount(6)
         );
+    }
+
+    #[test]
+    fn debug_game_allows_one_player() {
+        let game = Game::new_debug(players(1)).expect("debug game starts");
+        assert_eq!(game.players().len(), 1);
+        assert_eq!(game.current_player(), &PlayerId::new("p0"));
     }
 
     #[test]

@@ -167,6 +167,25 @@ impl Room {
         Ok(())
     }
 
+    pub fn start_debug_game(&mut self, requester: &PeerId) -> Result<(), RoomError> {
+        self.ensure_active_host(requester)?;
+        if self.game.is_some() {
+            return Err(RoomError::GameAlreadyStarted);
+        }
+        let players = self
+            .connected_members()
+            .into_iter()
+            .map(|member| (member.player_id.clone(), member.name.clone()))
+            .collect::<Vec<_>>();
+        if !(1..=uno_core::MAX_PLAYERS_V1).contains(&players.len()) {
+            return Err(RoomError::InvalidPlayerCount(players.len()));
+        }
+        self.game = Some(Game::new_debug(players)?);
+        self.status = RoomStatus::InGame;
+        self.replicate_to_standby();
+        Ok(())
+    }
+
     pub fn submit_command(
         &mut self,
         requester: &PeerId,
@@ -364,6 +383,14 @@ mod tests {
             room.start_game(&PeerId::new("host")).unwrap_err(),
             RoomError::InvalidPlayerCount(1)
         );
+    }
+
+    #[test]
+    fn debug_start_allows_one_player() {
+        let mut room = room();
+        room.start_debug_game(&PeerId::new("host")).unwrap();
+        assert!(matches!(room.status(), RoomStatus::InGame));
+        assert_eq!(room.public_game_state().unwrap().players.len(), 1);
     }
 
     #[test]

@@ -2,6 +2,7 @@
 name = "uno"
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 version.workspace = true
 
 [dependencies]
@@ -12,4 +13,3 @@ uno_room = { path = "../uno_room" }
 
 [lints]
 workspace = true
-
