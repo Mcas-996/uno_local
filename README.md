@@ -90,3 +90,5 @@ src/
 ## License
 
 GNU Affero General Public License v3.0 only. See [LICENSE](LICENSE).
+
+used cargo-dist
