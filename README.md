@@ -92,3 +92,6 @@ src/
 GNU Affero General Public License v3.0 only. See [LICENSE](LICENSE).
 
 used cargo-dist
+
+## Something else
+For your cybersecurity, run it in a new docker if you dont want to be attacked.
