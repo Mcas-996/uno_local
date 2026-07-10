@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use crate::ai::{Difficulty, choose_action};
 use crate::core::{Action, Card, Color, EventKind, Game, GameEvent, PlayerId};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
@@ -118,6 +118,11 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
+        // Terminals using an enhanced keyboard protocol report both press and
+        // release events. A release must not apply the same action twice.
+        if key.kind == KeyEventKind::Release {
+            return;
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.should_exit = true;
             return;
@@ -508,5 +513,37 @@ mod tests {
             app.adjust_setup(1);
         }
         assert_eq!(app.setup.bot_count, 4);
+    }
+
+    #[test]
+    fn key_release_events_do_not_repeat_navigation() {
+        let mut app = App::new(Language::English);
+
+        app.setup.selected = 2;
+        app.handle_key(KeyEvent::new_with_kind(
+            KeyCode::Up,
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ));
+        app.handle_key(KeyEvent::new_with_kind(
+            KeyCode::Down,
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ));
+        assert_eq!(app.setup.selected, 2);
+
+        app.setup.selected = 1;
+        app.setup.bot_count = 3;
+        app.handle_key(KeyEvent::new_with_kind(
+            KeyCode::Left,
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ));
+        app.handle_key(KeyEvent::new_with_kind(
+            KeyCode::Right,
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ));
+        assert_eq!(app.setup.bot_count, 3);
     }
 }
