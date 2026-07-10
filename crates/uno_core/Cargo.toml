@@ -1,9 +1,0 @@
-[package]
-name = "uno_core"
-edition.workspace = true
-license.workspace = true
-version.workspace = true
-
-[lints]
-workspace = true
-

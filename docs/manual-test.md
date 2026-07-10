@@ -1,44 +1,28 @@
-# Manual Test Commands
+# Local TUI Manual Test
 
-## Host with STUN
+## Launch and setup
 
-```powershell
-cargo run -p uno -- host --name Alice --port 34567
-```
+1. Run `cargo run -p uno` in a terminal at least 70 × 22 cells.
+2. Edit the player name and select 1, 2, 3, and 4 AI opponents in separate runs.
+3. Confirm Easy, Normal, and Hard can each start a match.
+4. Run `uno --help` and confirm it exits without entering raw terminal mode.
 
-Share the printed `uno://...` string with another peer.
+## Gameplay
 
-## Join
+1. Select cards with the arrow keys and play with Enter.
+2. Draw with `D`; confirm a second draw is rejected and only the drawn card can be played before passing.
+3. Play a wild card and confirm the color picker can be confirmed or cancelled.
+4. Open `:` and exercise `play <index>`, `draw`, `pass`, `help`, `new`, and `quit`.
+5. Complete a match and start a new one from the result screen.
 
-```powershell
-cargo run -p uno -- join "uno://v1/udp/203.0.113.10:34567/room/room-1/host/host-1" --name Bob
-```
+## Terminal behavior
 
-## Host with manual UDP forwarding
+1. Resize below 70 × 22 and confirm the resize prompt appears.
+2. Open and close help with `?` and Esc.
+3. Cancel and confirm the quit dialog.
+4. Press Ctrl+C during a match and confirm the shell returns to a normal visible cursor and echo state.
 
-Forward UDP port `34567` on the router to the host machine, then run:
+## Localization
 
-```powershell
-cargo run -p uno -- host --name Alice --port 34567 --forwarded 203.0.113.10:34567
-```
-
-## Local Debug Flow
-
-```powershell
-cargo run -p uno -- host --name Alice --no-stun
-```
-
-Inside the prompt:
-
-```text
-ready
-start
-state
-draw
-pass
-leave
-```
-
-## Simulating Disconnects
-
-Start a host and at least one joiner, then terminate the active host process. A room with a synchronized standby host is expected to promote the standby host. If no synchronized standby host exists, the room reports that it cannot continue.
+1. Start under a `zh-CN` or other `zh*` locale and confirm Chinese setup, game, help, result, and errors.
+2. Start under a non-Chinese or unavailable locale and confirm English fallback.

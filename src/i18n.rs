@@ -1,0 +1,239 @@
+use crate::ai::Difficulty;
+use crate::core::{Card, Color, Direction, GameError, Rank};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Language {
+    English,
+    Chinese,
+}
+
+impl Language {
+    pub fn detect() -> Self {
+        Self::from_locale(sys_locale::get_locale().as_deref())
+    }
+
+    pub fn from_locale(locale: Option<&str>) -> Self {
+        if locale
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .starts_with("zh")
+        {
+            Self::Chinese
+        } else {
+            Self::English
+        }
+    }
+
+    pub fn text(self, message: Message) -> &'static str {
+        let (english, chinese) = match message {
+            Message::Title => ("UNO · Local AI", "UNO · 本地 AI"),
+            Message::Setup => ("New local match", "新建本地对局"),
+            Message::PlayerName => ("Player name", "玩家名称"),
+            Message::Bots => ("AI opponents", "电脑玩家"),
+            Message::Difficulty => ("Difficulty", "难度"),
+            Message::Start => ("Start match", "开始游戏"),
+            Message::SetupHint => (
+                "↑/↓ field  ←/→ value  type name  Enter start  Esc quit",
+                "↑/↓ 选择  ←/→ 调整  输入名称  Enter 开始  Esc 退出",
+            ),
+            Message::Opponents => ("Opponents", "对手"),
+            Message::Table => ("Table", "牌桌"),
+            Message::YourHand => ("Your hand", "你的手牌"),
+            Message::EventLog => ("Events", "事件"),
+            Message::Turn => ("Turn", "当前回合"),
+            Message::ActiveColor => ("Active color", "当前颜色"),
+            Message::Direction => ("Direction", "方向"),
+            Message::Cards => ("cards", "张牌"),
+            Message::GameHint => (
+                "←/→ select  Enter play  D draw  P pass  : command  ? help  Q quit",
+                "←/→ 选牌  Enter 出牌  D 摸牌  P 跳过  : 命令  ? 帮助  Q 退出",
+            ),
+            Message::Command => ("Command", "命令"),
+            Message::ChooseColor => ("Choose a color", "选择颜色"),
+            Message::ColorHint => (
+                "←/→ choose  Enter confirm  Esc cancel",
+                "←/→ 选择  Enter 确认  Esc 取消",
+            ),
+            Message::Help => ("Help", "帮助"),
+            Message::HelpBody => (
+                "Shortcuts\n  ←/→ select card   Enter play\n  D draw             P pass\n  : command          Q quit\n\nCommands\n  play <index>  draw  pass\n  help          new   quit\n\nPress ? or Esc to return.",
+                "快捷键\n  ←/→ 选择手牌       Enter 出牌\n  D 摸牌             P 跳过\n  : 输入命令         Q 退出\n\n命令\n  play <序号>   draw  pass\n  help          new   quit\n\n按 ? 或 Esc 返回。",
+            ),
+            Message::QuitTitle => ("Leave match?", "退出对局？"),
+            Message::QuitBody => ("Y confirm · N/Esc cancel", "Y 确认 · N/Esc 取消"),
+            Message::Winner => ("Round complete", "本局结束"),
+            Message::NewMatchHint => ("N new match · Q quit", "N 新游戏 · Q 退出"),
+            Message::TooSmall => (
+                "Terminal too small. Resize to at least 70 × 22.",
+                "终端尺寸过小，请调整到至少 70 × 22。",
+            ),
+            Message::YourTurn => ("Your turn", "轮到你了"),
+            Message::Thinking => ("AI is thinking…", "AI 正在思考…"),
+            Message::DrewCard => ("drew a card", "摸了一张牌"),
+            Message::Passed => ("passed", "跳过回合"),
+            Message::Played => ("played", "打出"),
+            Message::InvalidCommand => ("Invalid command", "无效命令"),
+            Message::InvalidCardIndex => ("Invalid card index", "手牌序号无效"),
+            Message::Easy => ("Easy", "简单"),
+            Message::Normal => ("Normal", "普通"),
+            Message::Hard => ("Hard", "困难"),
+            Message::Clockwise => ("clockwise", "顺时针"),
+            Message::CounterClockwise => ("counter-clockwise", "逆时针"),
+        };
+        match self {
+            Self::English => english,
+            Self::Chinese => chinese,
+        }
+    }
+
+    pub fn difficulty(self, difficulty: Difficulty) -> &'static str {
+        self.text(match difficulty {
+            Difficulty::Easy => Message::Easy,
+            Difficulty::Normal => Message::Normal,
+            Difficulty::Hard => Message::Hard,
+        })
+    }
+
+    pub fn direction(self, direction: Direction) -> &'static str {
+        self.text(match direction {
+            Direction::Clockwise => Message::Clockwise,
+            Direction::CounterClockwise => Message::CounterClockwise,
+        })
+    }
+
+    pub fn color(self, color: Color) -> &'static str {
+        match (self, color) {
+            (Self::English, Color::Red) => "RED",
+            (Self::English, Color::Yellow) => "YELLOW",
+            (Self::English, Color::Green) => "GREEN",
+            (Self::English, Color::Blue) => "BLUE",
+            (Self::Chinese, Color::Red) => "红",
+            (Self::Chinese, Color::Yellow) => "黄",
+            (Self::Chinese, Color::Green) => "绿",
+            (Self::Chinese, Color::Blue) => "蓝",
+        }
+    }
+
+    pub fn card(self, card: Card) -> String {
+        let color = card.color.map_or("WILD", |value| self.color(value));
+        let rank = match (self, card.rank) {
+            (_, Rank::Number(number)) => number.to_string(),
+            (Self::English, Rank::Skip) => "SKIP".to_owned(),
+            (Self::English, Rank::Reverse) => "REV".to_owned(),
+            (Self::English, Rank::DrawTwo) => "+2".to_owned(),
+            (Self::English, Rank::Wild) => "WILD".to_owned(),
+            (Self::English, Rank::WildDrawFour) => "WILD +4".to_owned(),
+            (Self::Chinese, Rank::Skip) => "禁".to_owned(),
+            (Self::Chinese, Rank::Reverse) => "转".to_owned(),
+            (Self::Chinese, Rank::DrawTwo) => "+2".to_owned(),
+            (Self::Chinese, Rank::Wild) => "变色".to_owned(),
+            (Self::Chinese, Rank::WildDrawFour) => "变色 +4".to_owned(),
+        };
+        if card.is_wild() {
+            rank
+        } else {
+            format!("{color} {rank}")
+        }
+    }
+
+    pub fn game_error(self, error: &GameError) -> String {
+        let message = match error {
+            GameError::NotPlayerTurn(_) => match self {
+                Self::English => "It is not your turn",
+                Self::Chinese => "还没轮到你",
+            },
+            GameError::CardNotOwned(_) => match self {
+                Self::English => "You do not own that card",
+                Self::Chinese => "你没有这张牌",
+            },
+            GameError::CardNotPlayable(_) => match self {
+                Self::English => "That card cannot be played",
+                Self::Chinese => "这张牌不能出",
+            },
+            GameError::DrawnCardOnly(_) => match self {
+                Self::English => "Only the card just drawn can be played",
+                Self::Chinese => "摸牌后只能打出刚摸到的牌",
+            },
+            GameError::MissingColorChoice => match self {
+                Self::English => "Choose a color",
+                Self::Chinese => "请选择颜色",
+            },
+            GameError::WildDrawFourNotAllowed => match self {
+                Self::English => "Wild +4 is illegal while you hold the active color",
+                Self::Chinese => "手中有当前颜色时不能出变色 +4",
+            },
+            GameError::AlreadyDrew => match self {
+                Self::English => "You already drew this turn",
+                Self::Chinese => "本回合已经摸过牌",
+            },
+            GameError::CannotPassBeforeDrawing => match self {
+                Self::English => "Draw before passing",
+                Self::Chinese => "必须先摸牌才能跳过",
+            },
+            GameError::GameAlreadyWon => match self {
+                Self::English => "The round is already over",
+                Self::Chinese => "本局已经结束",
+            },
+            _ => match self {
+                Self::English => "Action rejected",
+                Self::Chinese => "操作被拒绝",
+            },
+        };
+        message.to_owned()
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum Message {
+    Title,
+    Setup,
+    PlayerName,
+    Bots,
+    Difficulty,
+    Start,
+    SetupHint,
+    Opponents,
+    Table,
+    YourHand,
+    EventLog,
+    Turn,
+    ActiveColor,
+    Direction,
+    Cards,
+    GameHint,
+    Command,
+    ChooseColor,
+    ColorHint,
+    Help,
+    HelpBody,
+    QuitTitle,
+    QuitBody,
+    Winner,
+    NewMatchHint,
+    TooSmall,
+    YourTurn,
+    Thinking,
+    DrewCard,
+    Passed,
+    Played,
+    InvalidCommand,
+    InvalidCardIndex,
+    Easy,
+    Normal,
+    Hard,
+    Clockwise,
+    CounterClockwise,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn locale_selects_chinese_and_falls_back_to_english() {
+        assert_eq!(Language::from_locale(Some("zh-CN")), Language::Chinese);
+        assert_eq!(Language::from_locale(Some("ZH_hans")), Language::Chinese);
+        assert_eq!(Language::from_locale(Some("fr-FR")), Language::English);
+        assert_eq!(Language::from_locale(None), Language::English);
+    }
+}
