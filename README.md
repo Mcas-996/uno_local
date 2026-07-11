@@ -15,8 +15,20 @@ The project intentionally does not include rooms, host/join commands, networking
 
 ## Requirements
 
-- Rust 1.91 or newer
+- Rust 1.91 or newer(if you want to compile)
 - A terminal of at least 70 × 22 cells
+
+## Quick start
+Go to release page and download the latest version.
+Since i am lazy, i am not giving the showcase, debug it yourself or give a star and i will not be lazy
+
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Mcas-996/uno_online/releases/download/v0.5.0/uno-installer.sh | sh
+```
+```pwsh
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/Mcas-996/uno_online/releases/download/v0.5.0/uno-installer.ps1 | iex
+```
 
 ## Run
 
