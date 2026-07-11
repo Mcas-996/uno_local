@@ -411,12 +411,34 @@ impl Game {
             return Err(GameError::UnexpectedColorChoice);
         }
 
-        let hand_index = self.players[player_index]
-            .hand
-            .iter()
-            .position(|owned| *owned == card)
-            .expect("ownership checked above");
-        self.players[player_index].hand.remove(hand_index);
+        // Number cards may be stacked as a house rule: playing one discards every
+        // card with the same number. Keep the explicitly played card on top so
+        // its color determines the next legal play.
+        if let Rank::Number(number) = card.rank {
+            let hand = &mut self.players[player_index].hand;
+            let mut stacked = Vec::new();
+            hand.retain(|owned| {
+                if matches!(owned.rank, Rank::Number(candidate) if candidate == number) {
+                    stacked.push(*owned);
+                    false
+                } else {
+                    true
+                }
+            });
+            let selected_index = stacked
+                .iter()
+                .position(|owned| *owned == card)
+                .expect("ownership checked above");
+            stacked.remove(selected_index);
+            self.discard_pile.extend(stacked);
+        } else {
+            let hand_index = self.players[player_index]
+                .hand
+                .iter()
+                .position(|owned| *owned == card)
+                .expect("ownership checked above");
+            self.players[player_index].hand.remove(hand_index);
+        }
         self.discard_pile.push(card);
         self.active_color = chosen_color.or(card.color).expect("play color validated");
         self.phase = TurnPhase::AwaitingAction;
@@ -680,6 +702,59 @@ mod tests {
             .unwrap_err(),
             GameError::WildDrawFourNotAllowed
         );
+    }
+
+    #[test]
+    fn playing_number_stacks_all_cards_with_same_number() {
+        let mut game = game();
+        let current = game.current_player().clone();
+        let selected = Card::new(Color::Blue, Rank::Number(3));
+        let other_number = Card::new(Color::Red, Rank::Number(3));
+        let remaining = Card::new(Color::Green, Rank::Number(8));
+        game.active_color = Color::Blue;
+        game.discard_pile = vec![Card::new(Color::Blue, Rank::Number(6))];
+        game.players[0].hand = vec![other_number, remaining, selected];
+
+        game.apply_action(
+            &current,
+            Action::Play {
+                card: selected,
+                chosen_color: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(game.players[0].hand, vec![remaining]);
+        assert_eq!(
+            game.discard_pile,
+            vec![
+                Card::new(Color::Blue, Rank::Number(6)),
+                other_number,
+                selected,
+            ]
+        );
+        assert_eq!(game.active_color, Color::Blue);
+    }
+
+    #[test]
+    fn number_stack_can_win_round() {
+        let mut game = game();
+        let current = game.current_player().clone();
+        let selected = Card::new(Color::Yellow, Rank::Number(4));
+        game.active_color = Color::Yellow;
+        game.discard_pile = vec![Card::new(Color::Yellow, Rank::Number(7))];
+        game.players[0].hand = vec![selected, Card::new(Color::Red, Rank::Number(4))];
+
+        game.apply_action(
+            &current,
+            Action::Play {
+                card: selected,
+                chosen_color: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(game.public_state().winner, Some(current));
     }
 
     #[test]

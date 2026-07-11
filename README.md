@@ -61,6 +61,7 @@ The command bar accepts `play <index>`, `draw`, `pass`, `help`, `new`, and `quit
 ## Rules Included
 
 - A player may play a matching color, matching rank, or wild card.
+- Playing a number card also stacks every other card of the same number from that player's hand; the selected card remains on top.
 - After drawing, only the newly drawn card may be played; otherwise the player passes.
 - Wild Draw Four is legal only when the player has no card matching the active color.
 - Skip, Reverse, Draw Two, Wild, and Wild Draw Four are supported. Reverse acts as Skip in a two-player game.

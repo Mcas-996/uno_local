@@ -9,7 +9,7 @@ use rand::rngs::StdRng;
 
 use crate::i18n::{Language, Message};
 
-const AI_DELAY: Duration = Duration::from_millis(350);
+const AI_DELAY: Duration = Duration::from_secs(3);
 const MAX_LOGS: usize = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
