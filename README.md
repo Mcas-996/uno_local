@@ -24,10 +24,10 @@ Since i am lazy, i am not giving the showcase, debug it yourself or give a star 
 
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Mcas-996/uno_online/releases/download/v0.5.0/uno-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Mcas-996/uno_online/releases/download/v0.5.0-rc/uno-installer.sh | sh
 ```
 ```pwsh
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/Mcas-996/uno_online/releases/download/v0.5.0/uno-installer.ps1 | iex
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/Mcas-996/uno_online/releases/download/v0.5.0-rc/uno-installer.ps1 | iex
 ```
 
 ## Run
