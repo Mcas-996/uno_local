@@ -2,16 +2,30 @@
 //!
 //! UNO cards, deck variants, rules, turn state, and game events.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
+use rand::{Rng, SeedableRng};
 
 pub const MIN_PLAYERS: usize = 2;
 pub const MAX_PLAYERS: usize = 5;
 pub const STARTING_HAND_SIZE: usize = 7;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AiDrawRule {
+    ExcludeDrawEightAndSixteen,
+    ExcludeDrawSixteen,
+    GuaranteeDrawEightPerSeven,
+    TwoDrawEightAndOneSixteenPerSeven,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AiDrawState {
+    rule: AiDrawRule,
+    received: usize,
+}
 
 // ===== * DECK VARIANTS * =====
 
@@ -236,6 +250,7 @@ pub struct Game {
     events: Vec<GameEvent>,
     winner: Option<PlayerId>,
     rng: StdRng,
+    ai_draw_states: BTreeMap<PlayerId, AiDrawState>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -270,7 +285,20 @@ impl Game {
         players: Vec<(PlayerId, String)>,
         deck_variant: DeckVariant,
     ) -> Result<Self, GameError> {
-        Self::new_with_rng(players, deck_variant, StdRng::from_entropy())
+        Self::new_with_rng(
+            players,
+            deck_variant,
+            BTreeMap::new(),
+            StdRng::from_entropy(),
+        )
+    }
+
+    pub fn new_with_ai_draw_rules(
+        players: Vec<(PlayerId, String)>,
+        deck_variant: DeckVariant,
+        ai_draw_rules: BTreeMap<PlayerId, AiDrawRule>,
+    ) -> Result<Self, GameError> {
+        Self::new_with_rng(players, deck_variant, ai_draw_rules, StdRng::from_entropy())
     }
 
     #[cfg(test)]
@@ -279,12 +307,33 @@ impl Game {
         deck_variant: DeckVariant,
         seed: u64,
     ) -> Result<Self, GameError> {
-        Self::new_with_rng(players, deck_variant, StdRng::seed_from_u64(seed))
+        Self::new_with_rng(
+            players,
+            deck_variant,
+            BTreeMap::new(),
+            StdRng::seed_from_u64(seed),
+        )
+    }
+
+    #[cfg(test)]
+    fn new_seeded_with_ai_draw_rules(
+        players: Vec<(PlayerId, String)>,
+        deck_variant: DeckVariant,
+        ai_draw_rules: BTreeMap<PlayerId, AiDrawRule>,
+        seed: u64,
+    ) -> Result<Self, GameError> {
+        Self::new_with_rng(
+            players,
+            deck_variant,
+            ai_draw_rules,
+            StdRng::seed_from_u64(seed),
+        )
     }
 
     fn new_with_rng(
         players: Vec<(PlayerId, String)>,
         deck_variant: DeckVariant,
+        ai_draw_rules: BTreeMap<PlayerId, AiDrawRule>,
         mut rng: StdRng,
     ) -> Result<Self, GameError> {
         if !(MIN_PLAYERS..=MAX_PLAYERS).contains(&players.len()) {
@@ -299,11 +348,24 @@ impl Game {
 
         let mut deck = deck(deck_variant);
         deck.shuffle(&mut rng);
+        let mut ai_draw_states: BTreeMap<PlayerId, AiDrawState> = ai_draw_rules
+            .into_iter()
+            .map(|(id, rule)| (id, AiDrawState { rule, received: 0 }))
+            .collect();
         let mut player_states = Vec::with_capacity(players.len());
         for (id, name) in players {
             let mut hand = Vec::with_capacity(STARTING_HAND_SIZE);
             for _ in 0..STARTING_HAND_SIZE {
-                hand.push(deck.pop().ok_or(GameError::EmptyDrawPile)?);
+                let card = match ai_draw_states.get(&id).copied() {
+                    Some(state) if deck_variant == DeckVariant::Holiday => {
+                        draw_card_with_rule(&mut deck, state.rule, state.received, &mut rng)?
+                    }
+                    _ => deck.pop().ok_or(GameError::EmptyDrawPile)?,
+                };
+                hand.push(card);
+                if let Some(state) = ai_draw_states.get_mut(&id) {
+                    state.received += 1;
+                }
             }
             player_states.push(Player { id, name, hand });
         }
@@ -326,6 +388,7 @@ impl Game {
             events: Vec::new(),
             winner: None,
             rng,
+            ai_draw_states,
         };
         game.push_event(EventKind::GameStarted);
         Ok(game)
@@ -505,7 +568,7 @@ impl Game {
         if matches!(self.phase, TurnPhase::Drew(_)) {
             return Err(GameError::AlreadyDrew);
         }
-        let card = self.draw_card()?;
+        let card = self.draw_card_for(player)?;
         let player_index = self.player_index(player)?;
         self.players[player_index].hand.push(card);
         self.phase = TurnPhase::Drew(card);
@@ -583,7 +646,7 @@ impl Game {
             .expect("penalty target is always a player");
         let mut drawn = 0;
         for _ in 0..count {
-            let Ok(card) = self.draw_card() else {
+            let Ok(card) = self.draw_card_for(player) else {
                 break;
             };
             self.players[index].hand.push(card);
@@ -603,6 +666,32 @@ impl Game {
             self.discard_pile.push(top);
         }
         self.draw_pile.pop().ok_or(GameError::EmptyDrawPile)
+    }
+
+    fn draw_card_for(&mut self, player: &PlayerId) -> Result<Card, GameError> {
+        let Some(state) = self.ai_draw_states.get(player).copied() else {
+            return self.draw_card();
+        };
+        if self.deck_variant != DeckVariant::Holiday {
+            return self.draw_card();
+        }
+        if self.draw_pile.is_empty() && self.discard_pile.len() > 1 {
+            let top = self.discard_pile.pop().expect("discard has a top");
+            self.draw_pile.append(&mut self.discard_pile);
+            self.draw_pile.shuffle(&mut self.rng);
+            self.discard_pile.push(top);
+        }
+        let card = draw_card_with_rule(
+            &mut self.draw_pile,
+            state.rule,
+            state.received,
+            &mut self.rng,
+        )?;
+        self.ai_draw_states
+            .get_mut(player)
+            .expect("AI draw state still exists")
+            .received += 1;
+        Ok(card)
     }
 
     fn advance_turn(&mut self, steps: usize) {
@@ -645,6 +734,54 @@ impl Game {
         self.events.push(event.clone());
         event
     }
+}
+
+fn draw_card_with_rule<R: Rng + ?Sized>(
+    deck: &mut Vec<Card>,
+    rule: AiDrawRule,
+    received: usize,
+    rng: &mut R,
+) -> Result<Card, GameError> {
+    let block_position = received % STARTING_HAND_SIZE;
+    let required_rank = match rule {
+        AiDrawRule::GuaranteeDrawEightPerSeven if block_position == 0 => Some(Rank::DrawEight),
+        AiDrawRule::TwoDrawEightAndOneSixteenPerSeven if block_position < 2 => {
+            Some(Rank::DrawEight)
+        }
+        AiDrawRule::TwoDrawEightAndOneSixteenPerSeven if block_position == 2 => {
+            Some(Rank::WildDrawSixteen)
+        }
+        _ => None,
+    };
+    if let Some(rank) = required_rank {
+        if let Some(index) = deck.iter().rposition(|card| card.rank == rank) {
+            return Ok(deck.swap_remove(index));
+        }
+        return Ok(match rank {
+            Rank::DrawEight => Card::new(
+                Color::ALL[rng.gen_range(0..Color::ALL.len())],
+                Rank::DrawEight,
+            ),
+            Rank::WildDrawSixteen => Card::wild(Rank::WildDrawSixteen),
+            _ => unreachable!("only Holiday cards are guaranteed"),
+        });
+    }
+
+    let allowed = |card: &Card| match rule {
+        AiDrawRule::ExcludeDrawEightAndSixteen => {
+            !matches!(card.rank, Rank::DrawEight | Rank::WildDrawSixteen)
+        }
+        AiDrawRule::ExcludeDrawSixteen => !matches!(card.rank, Rank::WildDrawSixteen),
+        AiDrawRule::GuaranteeDrawEightPerSeven => true,
+        AiDrawRule::TwoDrawEightAndOneSixteenPerSeven => {
+            !matches!(card.rank, Rank::DrawEight | Rank::WildDrawSixteen)
+        }
+    };
+    let index = deck
+        .iter()
+        .rposition(allowed)
+        .ok_or(GameError::EmptyDrawPile)?;
+    Ok(deck.swap_remove(index))
 }
 
 pub fn deck(variant: DeckVariant) -> Vec<Card> {
@@ -746,6 +883,124 @@ mod tests {
         assert_eq!(
             first.hand_for(&PlayerId::new("p0")),
             second.hand_for(&PlayerId::new("p0"))
+        );
+    }
+
+    fn ai_rules(rule: AiDrawRule, count: usize) -> BTreeMap<PlayerId, AiDrawRule> {
+        (1..count)
+            .map(|index| (PlayerId::new(format!("p{index}")), rule))
+            .collect()
+    }
+
+    #[test]
+    fn easy_ai_never_receives_draw_eight_or_sixteen() {
+        let mut game = Game::new_seeded_with_ai_draw_rules(
+            players(2),
+            DeckVariant::Holiday,
+            ai_rules(AiDrawRule::ExcludeDrawEightAndSixteen, 2),
+            11,
+        )
+        .unwrap();
+        let bot = PlayerId::new("p1");
+        assert!(
+            game.hand_for(&bot)
+                .unwrap()
+                .iter()
+                .all(|card| !matches!(card.rank, Rank::DrawEight | Rank::WildDrawSixteen))
+        );
+        for _ in 0..30 {
+            let card = game.draw_card_for(&bot).unwrap();
+            assert!(!matches!(
+                card.rank,
+                Rank::DrawEight | Rank::WildDrawSixteen
+            ));
+        }
+    }
+
+    #[test]
+    fn normal_ai_never_receives_draw_sixteen() {
+        let mut game = Game::new_seeded_with_ai_draw_rules(
+            players(2),
+            DeckVariant::Holiday,
+            ai_rules(AiDrawRule::ExcludeDrawSixteen, 2),
+            12,
+        )
+        .unwrap();
+        let bot = PlayerId::new("p1");
+        assert!(
+            game.hand_for(&bot)
+                .unwrap()
+                .iter()
+                .all(|card| card.rank != Rank::WildDrawSixteen)
+        );
+        for _ in 0..30 {
+            assert_ne!(
+                game.draw_card_for(&bot).unwrap().rank,
+                Rank::WildDrawSixteen
+            );
+        }
+    }
+
+    #[test]
+    fn hard_ai_receives_a_draw_eight_in_each_initial_hand() {
+        let game = Game::new_seeded_with_ai_draw_rules(
+            players(5),
+            DeckVariant::Holiday,
+            ai_rules(AiDrawRule::GuaranteeDrawEightPerSeven, 5),
+            13,
+        )
+        .unwrap();
+        for index in 1..5 {
+            assert!(
+                game.hand_for(&PlayerId::new(format!("p{index}")))
+                    .unwrap()
+                    .iter()
+                    .any(|card| card.rank == Rank::DrawEight)
+            );
+        }
+    }
+
+    #[test]
+    fn extreme_ai_gets_exact_holiday_ratio_in_every_seven_cards() {
+        let mut game = Game::new_seeded_with_ai_draw_rules(
+            players(5),
+            DeckVariant::Holiday,
+            ai_rules(AiDrawRule::TwoDrawEightAndOneSixteenPerSeven, 5),
+            14,
+        )
+        .unwrap();
+        for index in 1..5 {
+            let bot = PlayerId::new(format!("p{index}"));
+            let hand = game.hand_for(&bot).unwrap();
+            assert_eq!(
+                hand.iter()
+                    .filter(|card| card.rank == Rank::DrawEight)
+                    .count(),
+                2
+            );
+            assert_eq!(
+                hand.iter()
+                    .filter(|card| card.rank == Rank::WildDrawSixteen)
+                    .count(),
+                1
+            );
+        }
+
+        let bot = PlayerId::new("p1");
+        let next_seven: Vec<Card> = (0..7).map(|_| game.draw_card_for(&bot).unwrap()).collect();
+        assert_eq!(
+            next_seven
+                .iter()
+                .filter(|card| card.rank == Rank::DrawEight)
+                .count(),
+            2
+        );
+        assert_eq!(
+            next_seven
+                .iter()
+                .filter(|card| card.rank == Rank::WildDrawSixteen)
+                .count(),
+            1
         );
     }
 

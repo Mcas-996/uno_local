@@ -15,10 +15,11 @@ pub enum Difficulty {
     #[default]
     Normal,
     Hard,
+    Extreme,
 }
 
 impl Difficulty {
-    pub const ALL: [Self; 3] = [Self::Easy, Self::Normal, Self::Hard];
+    pub const ALL: [Self; 4] = [Self::Easy, Self::Normal, Self::Hard, Self::Extreme];
 }
 
 impl fmt::Display for Difficulty {
@@ -27,6 +28,7 @@ impl fmt::Display for Difficulty {
             Self::Easy => "easy",
             Self::Normal => "normal",
             Self::Hard => "hard",
+            Self::Extreme => "extreme",
         })
     }
 }
@@ -39,6 +41,7 @@ impl FromStr for Difficulty {
             "easy" => Ok(Self::Easy),
             "normal" | "medium" => Ok(Self::Normal),
             "hard" => Ok(Self::Hard),
+            "extreme" | "expert" => Ok(Self::Extreme),
             _ => Err(format!("invalid difficulty '{value}'")),
         }
     }
@@ -71,14 +74,16 @@ pub fn choose_action<R: Rng + ?Sized>(
 
     let selected = match difficulty {
         Difficulty::Easy => playable_cards[rng.gen_range(0..playable_cards.len())],
-        Difficulty::Normal | Difficulty::Hard => {
+        Difficulty::Normal | Difficulty::Hard | Difficulty::Extreme => {
             choose_scored(difficulty, state, hand, &playable_cards, rng)
         }
     };
     let chosen_color = if selected.is_wild() {
         Some(match difficulty {
             Difficulty::Easy => Color::ALL[rng.gen_range(0..Color::ALL.len())],
-            Difficulty::Normal | Difficulty::Hard => dominant_color(hand, rng),
+            Difficulty::Normal | Difficulty::Hard | Difficulty::Extreme => {
+                dominant_color(hand, rng)
+            }
         })
     } else {
         None
@@ -119,7 +124,7 @@ fn choose_scored<R: Rng + ?Sized>(
         if card.is_wild() && has_colored_play {
             score -= 8;
         }
-        if difficulty == Difficulty::Hard && next_hand <= 2 {
+        if matches!(difficulty, Difficulty::Hard | Difficulty::Extreme) && next_hand <= 2 {
             score += match card.rank {
                 Rank::WildDrawFour => 14,
                 Rank::WildDrawSixteen => 22,

@@ -2,11 +2,13 @@
 //!
 //! Setup, input, local turns, and Holiday color selection.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::ai::{Difficulty, choose_action};
-use crate::core::{Action, Card, Color, DeckVariant, EventKind, Game, GameEvent, PlayerId};
+use crate::core::{
+    Action, AiDrawRule, Card, Color, DeckVariant, EventKind, Game, GameEvent, PlayerId,
+};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -106,8 +108,26 @@ impl App {
             };
             (id.clone(), name)
         }));
-        self.game =
-            Some(Game::new(players, self.setup.deck_variant).map_err(|error| error.to_string())?);
+        let ai_draw_rule = match self.setup.difficulty {
+            Difficulty::Easy => AiDrawRule::ExcludeDrawEightAndSixteen,
+            Difficulty::Normal => AiDrawRule::ExcludeDrawSixteen,
+            Difficulty::Hard => AiDrawRule::GuaranteeDrawEightPerSeven,
+            Difficulty::Extreme => AiDrawRule::TwoDrawEightAndOneSixteenPerSeven,
+        };
+        let ai_draw_rules = self
+            .ai_ids
+            .iter()
+            .cloned()
+            .map(|id| (id, ai_draw_rule))
+            .collect::<BTreeMap<_, _>>();
+        self.game = Some(
+            if self.setup.deck_variant == DeckVariant::Holiday {
+                Game::new_with_ai_draw_rules(players, self.setup.deck_variant, ai_draw_rules)
+            } else {
+                Game::new(players, self.setup.deck_variant)
+            }
+            .map_err(|error| error.to_string())?,
+        );
         self.screen = Screen::Game;
         self.selected_card = 0;
         self.command_mode = false;
@@ -555,6 +575,16 @@ mod tests {
         app.adjust_setup(1);
         app.adjust_setup(1);
         assert_eq!(app.setup.deck_variant, DeckVariant::Holiday);
+
+        app.setup.selected = 2;
+        for _ in 0..10 {
+            app.adjust_setup(1);
+        }
+        assert_eq!(app.setup.difficulty, Difficulty::Extreme);
+        for _ in 0..10 {
+            app.adjust_setup(-1);
+        }
+        assert_eq!(app.setup.difficulty, Difficulty::Easy);
     }
 
     #[test]

@@ -85,6 +85,7 @@ impl Language {
             Message::Easy => ("Easy", "简单"),
             Message::Normal => ("Normal", "普通"),
             Message::Hard => ("Hard", "困难"),
+            Message::Extreme => ("Extreme", "最难"),
             Message::Clockwise => ("clockwise", "顺时针"),
             Message::CounterClockwise => ("counter-clockwise", "逆时针"),
         };
@@ -113,6 +114,7 @@ impl Language {
             Difficulty::Easy => Message::Easy,
             Difficulty::Normal => Message::Normal,
             Difficulty::Hard => Message::Hard,
+            Difficulty::Extreme => Message::Extreme,
         })
     }
 
@@ -261,6 +263,7 @@ pub enum Message {
     Easy,
     Normal,
     Hard,
+    Extreme,
     Clockwise,
     CounterClockwise,
 }
@@ -275,5 +278,7 @@ mod tests {
         assert_eq!(Language::from_locale(Some("ZH_hans")), Language::Chinese);
         assert_eq!(Language::from_locale(Some("fr-FR")), Language::English);
         assert_eq!(Language::from_locale(None), Language::English);
+        assert_eq!(Language::English.difficulty(Difficulty::Extreme), "Extreme");
+        assert_eq!(Language::Chinese.difficulty(Difficulty::Extreme), "最难");
     }
 }
