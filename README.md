@@ -7,6 +7,7 @@
 [![Rust](https://img.shields.io/badge/Rust-1.91%2B-f74c00?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-27d8e8)](#quick-start)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-f7f73b)](LICENSE)
+[![Release](https://github.com/Mcas-996/uno_online/actions/workflows/release.yml/badge.svg)](https://github.com/Mcas-996/uno_online/actions/workflows/release.yml)
 
 
 https://github.com/user-attachments/assets/d1b4b99b-929e-4755-9afa-341928041e72
