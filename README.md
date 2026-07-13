@@ -10,7 +10,6 @@
 
 ![UNO Star Carnival setup screen](docs/uno-star-carnival.png)
 
-♠️　♥️　🃏　♦️　♣️
 
 </div>
 
