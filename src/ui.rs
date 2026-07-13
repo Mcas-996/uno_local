@@ -7,7 +7,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction as LayoutDirection, Layout, Rect};
 use ratatui::style::{Color as TuiColor, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap};
 
 use crate::app::{App, Screen};
 use crate::i18n::Message;
@@ -104,6 +104,7 @@ fn render_setup(frame: &mut Frame<'_>, app: &App, area: Rect) {
             .block(
                 Block::default()
                     .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
+                    .border_type(BorderType::Rounded)
                     .border_style(carnival_border()),
             ),
         rows[0],
@@ -167,6 +168,7 @@ fn render_setup(frame: &mut Frame<'_>, app: &App, area: Rect) {
             .block(
                 Block::default()
                     .borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT)
+                    .border_type(BorderType::Rounded)
                     .border_style(carnival_border()),
             ),
         rows[2],
@@ -473,6 +475,7 @@ fn carnival_border() -> Style {
 fn carnival_block(title: &str) -> Block<'_> {
     Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(carnival_border())
         .title(title)
         .title_style(
@@ -501,6 +504,38 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    fn assert_rounded_corners(terminal: &Terminal<TestBackend>, area: Rect) {
+        let buffer = terminal.backend().buffer();
+        let right = area.x + area.width - 1;
+        let bottom = area.y + area.height - 1;
+
+        assert_eq!(buffer[(area.x, area.y)].symbol(), "╭");
+        assert_eq!(buffer[(right, area.y)].symbol(), "╮");
+        assert_eq!(buffer[(area.x, bottom)].symbol(), "╰");
+        assert_eq!(buffer[(right, bottom)].symbol(), "╯");
+    }
+
+    #[test]
+    fn setup_game_and_overlay_use_rounded_borders() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let app = App::new(Language::English);
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        assert_rounded_corners(&terminal, Rect::new(9, 3, 62, 18));
+
+        let backend = TestBackend::new(100, 28);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new(Language::English);
+        app.setup.bot_count = 1;
+        app.start_match().unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        assert_rounded_corners(&terminal, Rect::new(0, 0, 100, 3));
+
+        app.screen = Screen::Help;
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        assert_rounded_corners(&terminal, Rect::new(19, 3, 62, 21));
     }
 
     #[test]
