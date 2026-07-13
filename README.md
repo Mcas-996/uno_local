@@ -50,3 +50,7 @@ Release artifacts and installers are built with [cargo-dist](https://github.com/
 ## License
 
 This project is licensed under the [GNU Affero General Public License v3.0 only](LICENSE).
+
+## Issue
+
+If you found any issue, feel free to report it in [issue](https://github.com/Mcas-996/uno_local/issues)
