@@ -211,6 +211,10 @@ impl Language {
                 Self::English => "The round is already over",
                 Self::Chinese => "本局已经结束",
             },
+            GameError::EmptyDrawPile => match self {
+                Self::English => "No cards are available to draw; pass instead",
+                Self::Chinese => "已经无牌可摸，请直接跳过",
+            },
             _ => match self {
                 Self::English => "Action rejected",
                 Self::Chinese => "操作被拒绝",
