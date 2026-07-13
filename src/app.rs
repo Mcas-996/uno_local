@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use crate::ai::{Difficulty, choose_action};
 use crate::core::{
-    Action, AiDrawRule, Card, Color, DeckVariant, EventKind, Game, GameEvent, PlayerId,
+    Action, Card, Color, DeckVariant, EventKind, Game, GameEvent, PlayerDrawRule, PlayerId,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use rand::SeedableRng;
@@ -108,21 +108,11 @@ impl App {
             };
             (id.clone(), name)
         }));
-        let ai_draw_rule = match self.setup.difficulty {
-            Difficulty::Easy => AiDrawRule::ExcludeDrawEightAndSixteen,
-            Difficulty::Normal => AiDrawRule::ExcludeDrawSixteen,
-            Difficulty::Hard => AiDrawRule::GuaranteeDrawEightPerSeven,
-            Difficulty::Extreme => AiDrawRule::TwoDrawEightAndOneSixteenPerSeven,
-        };
-        let ai_draw_rules = self
-            .ai_ids
-            .iter()
-            .cloned()
-            .map(|id| (id, ai_draw_rule))
-            .collect::<BTreeMap<_, _>>();
+        let player_draw_rules =
+            draw_rules_for_match(self.setup.difficulty, &self.human_id, &self.ai_ids);
         self.game = Some(
             if self.setup.deck_variant == DeckVariant::Holiday {
-                Game::new_with_ai_draw_rules(players, self.setup.deck_variant, ai_draw_rules)
+                Game::new_with_draw_rules(players, self.setup.deck_variant, player_draw_rules)
             } else {
                 Game::new(players, self.setup.deck_variant)
             }
@@ -484,6 +474,33 @@ impl App {
     }
 }
 
+fn draw_rules_for_match(
+    difficulty: Difficulty,
+    human_id: &PlayerId,
+    ai_ids: &[PlayerId],
+) -> BTreeMap<PlayerId, PlayerDrawRule> {
+    let ai_draw_rule = match difficulty {
+        Difficulty::Easy => PlayerDrawRule::ExcludeDrawEightAndSixteen,
+        Difficulty::Normal => PlayerDrawRule::ExcludeDrawSixteen,
+        Difficulty::Hard => PlayerDrawRule::GuaranteeDrawEightPerSeven,
+        Difficulty::Extreme => PlayerDrawRule::TwoDrawEightAndOneSixteenPerSeven,
+    };
+    let mut rules = ai_ids
+        .iter()
+        .cloned()
+        .map(|id| (id, ai_draw_rule))
+        .collect::<BTreeMap<_, _>>();
+    let human_draw_rule = match difficulty {
+        Difficulty::Easy => Some(PlayerDrawRule::GuaranteeDrawEightPerFiveAndSixteenPerTen),
+        Difficulty::Normal => Some(PlayerDrawRule::GuaranteeDrawEightPerTwenty),
+        Difficulty::Hard | Difficulty::Extreme => None,
+    };
+    if let Some(rule) = human_draw_rule {
+        rules.insert(human_id.clone(), rule);
+    }
+    rules
+}
+
 #[derive(Debug, Eq, PartialEq)]
 enum AppCommand {
     Play(usize),
@@ -517,6 +534,33 @@ impl AppCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn difficulty_assigns_human_guarantees_without_changing_ai_rules() {
+        let human = PlayerId::new("human");
+        let bots = [PlayerId::new("ai-1"), PlayerId::new("ai-2")];
+
+        let easy = draw_rules_for_match(Difficulty::Easy, &human, &bots);
+        assert_eq!(
+            easy[&human],
+            PlayerDrawRule::GuaranteeDrawEightPerFiveAndSixteenPerTen
+        );
+        assert!(
+            bots.iter()
+                .all(|id| { easy[id] == PlayerDrawRule::ExcludeDrawEightAndSixteen })
+        );
+
+        let normal = draw_rules_for_match(Difficulty::Normal, &human, &bots);
+        assert_eq!(normal[&human], PlayerDrawRule::GuaranteeDrawEightPerTwenty);
+        assert!(
+            bots.iter()
+                .all(|id| normal[id] == PlayerDrawRule::ExcludeDrawSixteen)
+        );
+
+        for difficulty in [Difficulty::Hard, Difficulty::Extreme] {
+            assert!(!draw_rules_for_match(difficulty, &human, &bots).contains_key(&human));
+        }
+    }
 
     #[test]
     fn command_parser_accepts_documented_commands() {
