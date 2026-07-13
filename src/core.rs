@@ -468,8 +468,8 @@ impl Game {
             }
         }
         actions.push(match self.phase {
-            TurnPhase::AwaitingAction => Action::Draw,
-            TurnPhase::Drew(_) => Action::Pass,
+            TurnPhase::AwaitingAction if self.can_draw_card_for(player) => Action::Draw,
+            TurnPhase::AwaitingAction | TurnPhase::Drew(_) => Action::Pass,
         });
         Ok(actions)
     }
@@ -586,7 +586,7 @@ impl Game {
     }
 
     fn pass(&mut self, player: &PlayerId) -> Result<GameEvent, GameError> {
-        if !matches!(self.phase, TurnPhase::Drew(_)) {
+        if !matches!(self.phase, TurnPhase::Drew(_)) && self.can_draw_card_for(player) {
             return Err(GameError::CannotPassBeforeDrawing);
         }
         self.phase = TurnPhase::AwaitingAction;
@@ -701,6 +701,27 @@ impl Game {
         Ok(card)
     }
 
+    fn can_draw_card_for(&self, player: &PlayerId) -> bool {
+        let recyclable = &self.discard_pile[..self.discard_pile.len().saturating_sub(1)];
+        let Some(state) = self.player_draw_states.get(player) else {
+            return !self.draw_pile.is_empty() || !recyclable.is_empty();
+        };
+        if self.deck_variant != DeckVariant::Holiday {
+            return !self.draw_pile.is_empty() || !recyclable.is_empty();
+        }
+
+        if required_rank_for_rule(state.rule, state.received).is_some() {
+            return true;
+        }
+
+        let allowed = |card: &Card| card_allowed_for_rule(state.rule, card);
+        if self.draw_pile.is_empty() {
+            recyclable.iter().any(allowed)
+        } else {
+            self.draw_pile.iter().any(allowed)
+        }
+    }
+
     fn advance_turn(&mut self, steps: usize) {
         let len = self.players.len();
         for _ in 0..steps {
@@ -749,9 +770,31 @@ fn draw_card_with_rule<R: Rng + ?Sized>(
     received: usize,
     rng: &mut R,
 ) -> Result<Card, GameError> {
+    if let Some(rank) = required_rank_for_rule(rule, received) {
+        if let Some(index) = deck.iter().rposition(|card| card.rank == rank) {
+            return Ok(deck.swap_remove(index));
+        }
+        return Ok(match rank {
+            Rank::DrawEight => Card::new(
+                Color::ALL[rng.gen_range(0..Color::ALL.len())],
+                Rank::DrawEight,
+            ),
+            Rank::WildDrawSixteen => Card::wild(Rank::WildDrawSixteen),
+            _ => unreachable!("only Holiday cards are guaranteed"),
+        });
+    }
+
+    let index = deck
+        .iter()
+        .rposition(|card| card_allowed_for_rule(rule, card))
+        .ok_or(GameError::EmptyDrawPile)?;
+    Ok(deck.swap_remove(index))
+}
+
+fn required_rank_for_rule(rule: PlayerDrawRule, received: usize) -> Option<Rank> {
     let block_position = received % STARTING_HAND_SIZE;
     let card_number = received + 1;
-    let required_rank = match rule {
+    match rule {
         PlayerDrawRule::GuaranteeDrawEightPerSeven if block_position == 0 => Some(Rank::DrawEight),
         PlayerDrawRule::TwoDrawEightAndOneSixteenPerSeven if block_position < 2 => {
             Some(Rank::DrawEight)
@@ -773,38 +816,22 @@ fn draw_card_with_rule<R: Rng + ?Sized>(
             Some(Rank::DrawEight)
         }
         _ => None,
-    };
-    if let Some(rank) = required_rank {
-        if let Some(index) = deck.iter().rposition(|card| card.rank == rank) {
-            return Ok(deck.swap_remove(index));
-        }
-        return Ok(match rank {
-            Rank::DrawEight => Card::new(
-                Color::ALL[rng.gen_range(0..Color::ALL.len())],
-                Rank::DrawEight,
-            ),
-            Rank::WildDrawSixteen => Card::wild(Rank::WildDrawSixteen),
-            _ => unreachable!("only Holiday cards are guaranteed"),
-        });
     }
+}
 
-    let allowed = |card: &Card| match rule {
+fn card_allowed_for_rule(rule: PlayerDrawRule, card: &Card) -> bool {
+    match rule {
         PlayerDrawRule::ExcludeDrawEightAndSixteen => {
             !matches!(card.rank, Rank::DrawEight | Rank::WildDrawSixteen)
         }
-        PlayerDrawRule::ExcludeDrawSixteen => !matches!(card.rank, Rank::WildDrawSixteen),
+        PlayerDrawRule::ExcludeDrawSixteen => card.rank != Rank::WildDrawSixteen,
         PlayerDrawRule::GuaranteeDrawEightPerSeven
         | PlayerDrawRule::GuaranteeDrawEightPerFiveAndSixteenPerTen
         | PlayerDrawRule::GuaranteeDrawEightPerTwenty => true,
         PlayerDrawRule::TwoDrawEightAndOneSixteenPerSeven => {
             !matches!(card.rank, Rank::DrawEight | Rank::WildDrawSixteen)
         }
-    };
-    let index = deck
-        .iter()
-        .rposition(allowed)
-        .ok_or(GameError::EmptyDrawPile)?;
-    Ok(deck.swap_remove(index))
+    }
 }
 
 pub fn deck(variant: DeckVariant) -> Vec<Card> {
@@ -1116,6 +1143,44 @@ mod tests {
             GameError::CannotPassBeforeDrawing
         );
         game.apply_action(&current, Action::Draw).unwrap();
+        assert!(game.apply_action(&current, Action::Pass).is_ok());
+    }
+
+    #[test]
+    fn player_can_pass_when_no_cards_are_available_to_draw() {
+        let mut game = game();
+        let current = game.current_player().clone();
+        game.draw_pile.clear();
+        game.discard_pile.truncate(1);
+
+        assert_eq!(
+            game.legal_actions(&current).unwrap().last(),
+            Some(&Action::Pass)
+        );
+        assert!(game.apply_action(&current, Action::Pass).is_ok());
+    }
+
+    #[test]
+    fn player_can_pass_when_draw_rule_excludes_every_remaining_card() {
+        let mut game = Game::new_seeded(players(2), DeckVariant::Holiday, 20).unwrap();
+        let current = game.current_player().clone();
+        game.player_draw_states.insert(
+            current.clone(),
+            PlayerDrawState {
+                rule: PlayerDrawRule::ExcludeDrawEightAndSixteen,
+                received: 0,
+            },
+        );
+        game.draw_pile = vec![
+            Card::new(Color::Red, Rank::DrawEight),
+            Card::wild(Rank::WildDrawSixteen),
+        ];
+        game.discard_pile.truncate(1);
+
+        assert_eq!(
+            game.legal_actions(&current).unwrap().last(),
+            Some(&Action::Pass)
+        );
         assert!(game.apply_action(&current, Action::Pass).is_ok());
     }
 
