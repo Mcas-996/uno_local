@@ -8,7 +8,9 @@
 [![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-27d8e8)](#quick-start)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-f7f73b)](LICENSE)
 
-![UNO Star Carnival setup screen](docs/uno-star-carnival.png)
+<video src="docs/screencut_usecase.mp4" controls width="100%">
+  <a href="docs/screencut_usecase.mp4">Watch the UNO Star Carnival demo video</a>
+</video>
 
 
 </div>
