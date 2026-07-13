@@ -15,6 +15,10 @@ use crate::i18n::Message;
 pub const MIN_WIDTH: u16 = 70;
 pub const MIN_HEIGHT: u16 = 22;
 
+const MIN_HAND_HEIGHT: u16 = 5;
+const MIN_LOG_HEIGHT: u16 = 3;
+const FIXED_GAME_HEIGHT: u16 = 14;
+
 pub fn render(frame: &mut Frame<'_>, app: &App) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
@@ -178,14 +182,21 @@ fn render_setup(frame: &mut Frame<'_>, app: &App, area: Rect) {
 fn render_game(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let game = app.game.as_ref().expect("game view has game");
     let state = game.public_state();
+    let (hand_lines, selected_hand_row) = hand_lines(
+        app.language,
+        app.human_hand().unwrap_or_default(),
+        app.selected_card,
+        area.width.saturating_sub(2) as usize,
+    );
+    let hand_height = hand_height(hand_lines.len(), area.height);
     let rows = Layout::default()
         .direction(LayoutDirection::Vertical)
         .constraints([
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(5),
-            Constraint::Length(5),
-            Constraint::Min(3),
+            Constraint::Length(hand_height),
+            Constraint::Min(MIN_LOG_HEIGHT),
             Constraint::Length(3),
         ])
         .split(area);
@@ -261,29 +272,11 @@ fn render_game(frame: &mut Frame<'_>, app: &App, area: Rect) {
         rows[2],
     );
 
-    let hand_spans = app
-        .human_hand()
-        .unwrap_or_default()
-        .iter()
-        .enumerate()
-        .flat_map(|(index, card)| {
-            let selected = index == app.selected_card;
-            let mut spans = vec![Span::styled(
-                format!(" {}:[", index + 1),
-                selected_style(Style::default().fg(TuiColor::Gray), selected),
-            )];
-            spans.extend(styled_card(app.language, *card, selected));
-            spans.push(Span::styled(
-                "] ",
-                selected_style(Style::default().fg(TuiColor::Gray), selected),
-            ));
-            spans.push(Span::raw(" "));
-            spans
-        })
-        .collect::<Vec<_>>();
+    let visible_hand_rows = rows[3].height.saturating_sub(2) as usize;
+    let hand_scroll = hand_scroll(selected_hand_row, visible_hand_rows);
     frame.render_widget(
-        Paragraph::new(Line::from(hand_spans))
-            .wrap(Wrap { trim: false })
+        Paragraph::new(hand_lines)
+            .scroll((u16::try_from(hand_scroll).unwrap_or(u16::MAX), 0))
             .block(carnival_block(app.language.text(Message::YourHand))),
         rows[3],
     );
@@ -319,6 +312,64 @@ fn render_game(frame: &mut Frame<'_>, app: &App, area: Rect) {
             })),
         rows[5],
     );
+}
+
+fn hand_lines(
+    language: crate::i18n::Language,
+    hand: &[crate::core::Card],
+    selected_card: usize,
+    width: usize,
+) -> (Vec<Line<'static>>, usize) {
+    let mut lines = Vec::new();
+    let mut current_line = Vec::new();
+    let mut current_width = 0;
+    let mut selected_row = 0;
+
+    for (index, card) in hand.iter().enumerate() {
+        let selected = index == selected_card;
+        let mut entry = vec![Span::styled(
+            format!(" {}:[", index + 1),
+            selected_style(Style::default().fg(TuiColor::Gray), selected),
+        )];
+        entry.extend(styled_card(language, *card, selected));
+        entry.push(Span::styled(
+            "]  ",
+            selected_style(Style::default().fg(TuiColor::Gray), selected),
+        ));
+        let entry_width = entry.iter().map(Span::width).sum::<usize>();
+
+        if !current_line.is_empty() && current_width + entry_width > width {
+            lines.push(Line::from(current_line));
+            current_line = Vec::new();
+            current_width = 0;
+        }
+        if selected {
+            selected_row = lines.len();
+        }
+        current_line.extend(entry);
+        current_width += entry_width;
+    }
+
+    if !current_line.is_empty() {
+        lines.push(Line::from(current_line));
+    }
+
+    (lines, selected_row)
+}
+
+fn hand_height(line_count: usize, area_height: u16) -> u16 {
+    let desired_height = u16::try_from(line_count)
+        .unwrap_or(u16::MAX)
+        .saturating_add(2)
+        .max(MIN_HAND_HEIGHT);
+    let max_height = area_height
+        .saturating_sub(FIXED_GAME_HEIGHT + MIN_LOG_HEIGHT)
+        .max(MIN_HAND_HEIGHT);
+    desired_height.min(max_height)
+}
+
+fn hand_scroll(selected_row: usize, visible_rows: usize) -> usize {
+    selected_row.saturating_add(1).saturating_sub(visible_rows)
 }
 
 fn game_hint(app: &App) -> String {
@@ -491,7 +542,7 @@ mod tests {
     use ratatui::backend::TestBackend;
 
     use super::*;
-    use crate::core::Action;
+    use crate::core::{Action, Card, Rank};
     use crate::i18n::Language;
 
     fn contents(terminal: &Terminal<TestBackend>) -> String {
@@ -575,6 +626,44 @@ mod tests {
         assert!(screen.contains("Your hand"));
         assert!(screen.contains("AI 1: 7 cards"));
         assert!(!screen.contains("AI 1 hand"));
+    }
+
+    #[test]
+    fn large_hand_wraps_every_card_and_tracks_the_selected_row() {
+        let cards = (0..40)
+            .map(|number| Card::new(Color::Red, Rank::Number(number % 10)))
+            .collect::<Vec<_>>();
+
+        let (lines, selected_row) = hand_lines(Language::English, &cards, 39, 68);
+        let text = lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(lines.len() > 3);
+        assert_eq!(selected_row, lines.len() - 1);
+        assert!(text.contains(" 1:["));
+        assert!(text.contains(" 33:["));
+        assert!(text.contains(" 40:["));
+    }
+
+    #[test]
+    fn large_hand_scroll_keeps_the_selected_row_visible() {
+        let visible_rows = 3_usize;
+        let selected_row = 5_usize;
+        let scroll = hand_scroll(selected_row, visible_rows);
+
+        assert_eq!(scroll, 3);
+        assert!(selected_row >= scroll);
+        assert!(selected_row < scroll + visible_rows);
+    }
+
+    #[test]
+    fn hand_height_expands_without_hiding_the_event_log() {
+        assert_eq!(hand_height(1, MIN_HEIGHT), MIN_HAND_HEIGHT);
+        assert_eq!(hand_height(6, 28), 8);
+        assert_eq!(hand_height(20, 28), 11);
     }
 
     #[test]
