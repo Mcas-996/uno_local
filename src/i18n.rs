@@ -12,6 +12,8 @@ pub enum Language {
 }
 
 impl Language {
+    pub const ALL: [Self; 2] = [Self::English, Self::Chinese];
+
     pub fn detect() -> Self {
         Self::from_locale(sys_locale::get_locale().as_deref())
     }
@@ -36,6 +38,7 @@ impl Language {
             Message::Bots => ("AI opponents", "电脑玩家"),
             Message::Difficulty => ("Difficulty", "难度"),
             Message::Deck => ("Deck", "牌组"),
+            Message::Language => ("Language", "语言"),
             Message::Start => ("Start match", "开始游戏"),
             Message::SetupHint => (
                 "↑/↓ field  ←/→ value  type name  Enter start  Esc quit",
@@ -88,6 +91,20 @@ impl Language {
         match self {
             Self::English => english,
             Self::Chinese => chinese,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::English => "English",
+            Self::Chinese => "简体中文",
+        }
+    }
+
+    pub fn default_player_name(self) -> &'static str {
+        match self {
+            Self::English => "Player",
+            Self::Chinese => "玩家",
         }
     }
 
@@ -209,6 +226,7 @@ pub enum Message {
     Bots,
     Difficulty,
     Deck,
+    Language,
     Start,
     SetupHint,
     Opponents,

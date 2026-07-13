@@ -37,10 +37,7 @@ pub struct Setup {
 impl Setup {
     fn new(language: Language) -> Self {
         Self {
-            name: match language {
-                Language::English => "Player".to_owned(),
-                Language::Chinese => "玩家".to_owned(),
-            },
+            name: language.default_player_name().to_owned(),
             bot_count: 3,
             difficulty: Difficulty::Normal,
             deck_variant: DeckVariant::Holiday,
@@ -94,10 +91,7 @@ impl App {
 
     pub fn start_match(&mut self) -> Result<(), String> {
         let player_name = if self.setup.name.trim().is_empty() {
-            match self.language {
-                Language::English => "Player".to_owned(),
-                Language::Chinese => "玩家".to_owned(),
-            }
+            self.language.default_player_name().to_owned()
         } else {
             self.setup.name.trim().to_owned()
         };
@@ -174,15 +168,15 @@ impl App {
     fn handle_setup_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Up => self.setup.selected = self.setup.selected.saturating_sub(1),
-            KeyCode::Down => self.setup.selected = (self.setup.selected + 1).min(4),
+            KeyCode::Down => self.setup.selected = (self.setup.selected + 1).min(5),
             KeyCode::Left => self.adjust_setup(-1),
             KeyCode::Right => self.adjust_setup(1),
-            KeyCode::Enter if self.setup.selected == 4 => {
+            KeyCode::Enter if self.setup.selected == 5 => {
                 if let Err(error) = self.start_match() {
                     self.status = error;
                 }
             }
-            KeyCode::Enter => self.setup.selected = (self.setup.selected + 1).min(4),
+            KeyCode::Enter => self.setup.selected = (self.setup.selected + 1).min(5),
             KeyCode::Backspace if self.setup.selected == 0 => {
                 self.setup.name.pop();
             }
@@ -224,6 +218,19 @@ impl App {
                     .saturating_add_signed(delta)
                     .clamp(0, DeckVariant::ALL.len() - 1);
                 self.setup.deck_variant = DeckVariant::ALL[index];
+            }
+            4 => {
+                let old_language = self.language;
+                let index = Language::ALL
+                    .iter()
+                    .position(|candidate| *candidate == self.language)
+                    .unwrap_or(0)
+                    .saturating_add_signed(delta)
+                    .clamp(0, Language::ALL.len() - 1);
+                self.language = Language::ALL[index];
+                if self.setup.name == old_language.default_player_name() {
+                    self.setup.name = self.language.default_player_name().to_owned();
+                }
             }
             _ => {}
         }
@@ -548,6 +555,21 @@ mod tests {
         app.adjust_setup(1);
         app.adjust_setup(1);
         assert_eq!(app.setup.deck_variant, DeckVariant::Holiday);
+    }
+
+    #[test]
+    fn setup_language_setting_switches_copy_and_preserves_custom_name() {
+        let mut app = App::new(Language::English);
+        app.setup.selected = 4;
+
+        app.adjust_setup(1);
+        assert_eq!(app.language, Language::Chinese);
+        assert_eq!(app.setup.name, "玩家");
+
+        app.setup.name = "Alex".to_owned();
+        app.adjust_setup(-1);
+        assert_eq!(app.language, Language::English);
+        assert_eq!(app.setup.name, "Alex");
     }
 
     #[test]

@@ -26,3 +26,4 @@
 
 1. Start under a `zh-CN` or other `zh*` locale and confirm Chinese setup, game, help, result, and errors.
 2. Start under a non-Chinese or unavailable locale and confirm English fallback.
+3. On the setup screen, select Language/语言 and use Left/Right to switch between English and Simplified Chinese; confirm the whole screen updates immediately.

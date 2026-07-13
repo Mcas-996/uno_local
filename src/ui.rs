@@ -130,6 +130,11 @@ fn render_setup(frame: &mut Frame<'_>, app: &App, area: Rect) {
             app.language.text(Message::Deck),
             app.language.deck_variant(app.setup.deck_variant)
         ),
+        format!(
+            "{}: {}",
+            app.language.text(Message::Language),
+            app.language.name()
+        ),
         app.language.text(Message::Start).to_owned(),
     ];
     let items = values.into_iter().enumerate().map(|(index, value)| {
@@ -510,6 +515,17 @@ mod tests {
         assert!(screen.contains('节'));
         assert!(screen.contains('日'));
         assert!(screen.contains("118"));
+    }
+
+    #[test]
+    fn setup_renders_language_setting() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let app = App::new(Language::English);
+
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+
+        assert!(contents(&terminal).contains("Language: English"));
     }
 
     #[test]
