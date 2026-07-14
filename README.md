@@ -58,6 +58,10 @@ The updater checks GitHub Releases and installs a newer version when one is avai
 
 Release artifacts and installers are built with [cargo-dist](https://github.com/axodotdev/cargo-dist). The `uno-update` command is provided by [axoupdater](https://github.com/axodotdev/axoupdater).
 
+## Development
+
+See [Project Structure and Running from Source](docs/development.md) for the source layout, development prerequisites, build commands, and local verification steps.
+
 ## License
 
 This project is licensed under the [GNU Affero General Public License v3.0 only](LICENSE).
