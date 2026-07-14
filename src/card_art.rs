@@ -44,20 +44,26 @@ pub fn generate_card_art(card: Card) -> DynamicImage {
         ellipse(&mut image, 34, 64, 112, 142, WHITE);
     }
 
-    let label = rank_label(card.rank);
-    let scale = if label.len() >= 3 { 10 } else { 16 };
     let ink = if card.is_wild() { WHITE } else { BLACK };
-    draw_centered_text(&mut image, label, 135, scale, ink);
-    draw_text(&mut image, label, 22, 24, 5, WHITE);
-    let corner_width = text_width(label, 5);
-    draw_text(
-        &mut image,
-        label,
-        CARD_WIDTH.saturating_sub(22 + corner_width),
-        CARD_HEIGHT - 59,
-        5,
-        WHITE,
-    );
+    if card.rank == Rank::Skip {
+        draw_block_symbol(&mut image, 90, 135, 43, 8, ink);
+        draw_block_symbol(&mut image, 36, 42, 17, 4, WHITE);
+        draw_block_symbol(&mut image, 144, 228, 17, 4, WHITE);
+    } else {
+        let label = rank_label(card.rank);
+        let scale = if label.len() >= 3 { 10 } else { 16 };
+        draw_centered_text(&mut image, label, 135, scale, ink);
+        draw_text(&mut image, label, 22, 24, 5, WHITE);
+        let corner_width = text_width(label, 5);
+        draw_text(
+            &mut image,
+            label,
+            CARD_WIDTH.saturating_sub(22 + corner_width),
+            CARD_HEIGHT - 59,
+            5,
+            WHITE,
+        );
+    }
 
     DynamicImage::ImageRgba8(image)
 }
@@ -84,7 +90,7 @@ fn rank_label(rank: Rank) -> &'static str {
         Rank::Number(8) => "8",
         Rank::Number(9) => "9",
         Rank::Number(_) => "?",
-        Rank::Skip => "S",
+        Rank::Skip => unreachable!("skip cards use the block symbol renderer"),
         Rank::Reverse => "R",
         Rank::DrawTwo => "+2",
         Rank::DrawEight => "+8",
@@ -153,6 +159,36 @@ fn wild_quadrants(image: &mut RgbaImage) {
     ];
     for (x, y, width, height, color) in regions {
         rounded_rect(image, x, y, width, height, 8, color);
+    }
+}
+
+fn draw_block_symbol(
+    image: &mut RgbaImage,
+    center_x: i32,
+    center_y: i32,
+    radius: i32,
+    stroke: i32,
+    color: Rgba<u8>,
+) {
+    let inner_radius = radius - stroke;
+    let slash_half_width = stroke / 2;
+    for y in center_y - radius..=center_y + radius {
+        for x in center_x - radius..=center_x + radius {
+            if x < 0 || y < 0 || x >= image.width() as i32 || y >= image.height() as i32 {
+                continue;
+            }
+
+            let dx = x - center_x;
+            let dy = y - center_y;
+            let distance_squared = dx * dx + dy * dy;
+            let on_ring = distance_squared >= inner_radius * inner_radius
+                && distance_squared <= radius * radius;
+            let on_slash = (dy - dx) * (dy - dx) <= 2 * slash_half_width * slash_half_width
+                && distance_squared <= radius * radius;
+            if on_ring || on_slash {
+                image.put_pixel(x as u32, y as u32, color);
+            }
+        }
     }
 }
 
@@ -235,9 +271,6 @@ fn glyph(character: char) -> [u8; 7] {
             0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110,
         ],
         '+' => [0, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0],
-        'S' => [
-            0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
-        ],
         'R' => [
             0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
         ],
@@ -296,5 +329,22 @@ mod tests {
         assert_eq!(*wild.get_pixel(150, 20), YELLOW);
         assert_eq!(*wild.get_pixel(20, 240), GREEN);
         assert_eq!(*wild.get_pixel(150, 240), BLUE);
+    }
+
+    #[test]
+    fn skip_uses_block_symbols_in_the_center_and_corners() {
+        let image = generate_card_art(Card::new(Color::Red, Rank::Skip)).into_rgba8();
+
+        assert_eq!(*image.get_pixel(90, 92), BLACK);
+        assert_eq!(*image.get_pixel(90, 135), BLACK);
+        assert_eq!(*image.get_pixel(90, 155), WHITE);
+
+        assert_eq!(*image.get_pixel(36, 25), WHITE);
+        assert_eq!(*image.get_pixel(36, 42), WHITE);
+        assert_eq!(*image.get_pixel(36, 50), RED);
+
+        assert_eq!(*image.get_pixel(144, 211), WHITE);
+        assert_eq!(*image.get_pixel(144, 228), WHITE);
+        assert_eq!(*image.get_pixel(144, 236), RED);
     }
 }
