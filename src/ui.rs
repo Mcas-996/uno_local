@@ -1,6 +1,8 @@
-//! * STAR CARNIVAL TABLE *
+//! 终端界面的布局与渲染。
 //!
-//! GBK-safe text with bright terminal-native Holiday styling.
+//! 本模块根据应用状态组合设置页、牌桌和覆盖层，并在终端尺寸或图像能力
+//! 不满足要求时自动切回纯文本牌面。手牌布局同时供渲染和键盘导航使用，
+//! 以保证光标移动与实际换行结果一致。
 
 use crate::core::{Action, Color};
 use ratatui::Frame;
@@ -14,16 +16,26 @@ use crate::app::{App, Screen};
 use crate::graphics::{GraphicsRuntime, PreviewSlot};
 use crate::i18n::Message;
 
+/// 完整界面能够正常布局的最小终端宽度。
 pub const MIN_WIDTH: u16 = 70;
+/// 完整界面能够正常布局的最小终端高度。
 pub const MIN_HEIGHT: u16 = 22;
+/// 启用图像牌面所需的最小终端高度。
 pub const IMAGE_MIN_HEIGHT: u16 = 26;
 
 const MIN_HAND_HEIGHT: u16 = 5;
 const MIN_LOG_HEIGHT: u16 = 3;
+// 除牌桌和手牌外，标题、对手、日志下限、页脚及各区边框占用的总高度。
 const FIXED_GAME_HEIGHT: u16 = 14;
 
+/// 按当前应用状态绘制一帧界面。
+///
+/// 先绘制设置页或牌桌主体，再叠加帮助、结算、退出确认和选色窗口。
+/// 当图像不应显示时会同步释放预览协议，避免终端残留上一帧的图像。
 pub fn render(frame: &mut Frame<'_>, app: &App, graphics: &mut GraphicsRuntime) {
     let area = frame.area();
+    // 尺寸不足时不再尝试压缩各分区，因为这样会让 Ratatui 区域重叠；
+    // 仅保留明确的调整窗口提示，同时清除可能残留的图像。
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         graphics.suspend();
         frame.render_widget(
@@ -36,6 +48,7 @@ pub fn render(frame: &mut Frame<'_>, app: &App, graphics: &mut GraphicsRuntime) 
         return;
     }
 
+    // 是否显示图像既取决于终端能力，也取决于当前页面是否允许图像覆盖。
     let images_visible = should_render_images(
         area,
         app.game.is_some(),
@@ -47,12 +60,15 @@ pub fn render(frame: &mut Frame<'_>, app: &App, graphics: &mut GraphicsRuntime) 
         graphics.suspend();
     }
 
+    // game 是否存在代表已经创建对局；帮助、退出和结算仍以牌桌为背景，
+    // 因此主体选择不直接依赖 screen。
     if app.game.is_some() {
         render_game(frame, app, area, graphics, images_visible);
     } else {
         render_setup(frame, app, area, graphics);
     }
 
+    // 覆盖层最后绘制，保证边框和文字位于主体之上。
     match app.screen {
         Screen::Help => render_overlay(
             frame,
@@ -97,11 +113,16 @@ pub fn render(frame: &mut Frame<'_>, app: &App, graphics: &mut GraphicsRuntime) 
         Screen::Setup | Screen::Game => {}
     }
 
+    // 选色不是独立 Screen，而是游戏页中的临时交互状态，所以单独叠加。
     if app.pending_wild.is_some() && app.screen == Screen::Game {
         render_color_picker(frame, app, area);
     }
 }
 
+/// 判断当前帧能否安全地绘制终端图像。
+///
+/// 除后端支持外，还要求正在显示无弹窗的游戏页且高度足够；宽度下限与
+/// 完整 UI 一致，高度下限更高是为了容纳纵向牌面。
 fn should_render_images(
     area: Rect,
     has_game: bool,
@@ -109,6 +130,8 @@ fn should_render_images(
     has_pending_wild: bool,
     backend: crate::graphics::GraphicsBackend,
 ) -> bool {
+    // 弹窗和选色窗口会覆盖牌桌；此时禁用终端图像，避免某些协议的图像
+    // 绘制层穿透普通字符组成的覆盖层。
     has_game
         && screen == Screen::Game
         && !has_pending_wild
@@ -117,6 +140,7 @@ fn should_render_images(
         && backend.supports_images()
 }
 
+/// 绘制居中的设置面板及当前终端实际采用的图形后端。
 fn render_setup(frame: &mut Frame<'_>, app: &App, area: Rect, graphics: &GraphicsRuntime) {
     let outer = centered(area, 62, 18);
     let rows = Layout::default()
@@ -144,6 +168,7 @@ fn render_setup(frame: &mut Frame<'_>, app: &App, area: Rect, graphics: &Graphic
         rows[0],
     );
 
+    // 数组顺序必须与 app::adjust_setup 使用的字段索引保持一致。
     let values = [
         format!(
             "{}: {}",
@@ -217,6 +242,10 @@ fn render_setup(frame: &mut Frame<'_>, app: &App, area: Rect, graphics: &Graphic
     );
 }
 
+/// 绘制游戏页的六个纵向区域。
+///
+/// `images_visible` 已由顶层入口综合页面状态、尺寸和后端能力计算，避免
+/// 各子区域自行做出不一致的图像决策。
 fn render_game(
     frame: &mut Frame<'_>,
     app: &App,
@@ -226,12 +255,14 @@ fn render_game(
 ) {
     let game = app.game.as_ref().expect("game view has game");
     let state = game.public_state();
+    // 先计算手牌的真实换行数，再决定手牌区高度和滚动偏移。
     let (hand_lines, selected_hand_row) = hand_lines(
         app.language,
         app.human_hand().unwrap_or_default(),
         app.selected_card,
         area.width.saturating_sub(2) as usize,
     );
+    // 图像牌面需要额外高度；手牌可用剩余空间增长，但必须给事件日志留位。
     let table_height = if images_visible { 9 } else { 5 };
     let hand_height = hand_height(hand_lines.len(), area.height, images_visible);
     let rows = Layout::default()
@@ -301,6 +332,7 @@ fn render_game(
         render_text_table(frame, app, &state, rows[2]);
     }
 
+    // 扣除上下边框后才是可显示的手牌文本行数。
     let visible_hand_rows = rows[3].height.saturating_sub(2) as usize;
     let hand_scroll = hand_scroll(selected_hand_row, visible_hand_rows);
     frame.render_widget(
@@ -310,6 +342,7 @@ fn render_game(
         rows[3],
     );
 
+    // 最新事件置顶，使固定高度日志区始终优先展示最近操作。
     let log_items = app
         .logs
         .iter()
@@ -320,6 +353,7 @@ fn render_game(
         rows[4],
     );
 
+    // 命令模式独占页脚；普通模式组合当前状态与按规则动态生成的可用操作。
     let footer = if app.command_mode {
         format!(":{}", app.command)
     } else {
@@ -343,6 +377,7 @@ fn render_game(
     );
 }
 
+/// 将手牌转换成可渲染文本行，并返回选中牌所在的行号。
 fn hand_lines(
     language: crate::i18n::Language,
     hand: &[crate::core::Card],
@@ -354,18 +389,28 @@ fn hand_lines(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// 一张手牌在响应式文本布局中的几何位置。
 struct HandCardPosition {
     index: usize,
     row: usize,
+    // 使用中心横坐标的两倍值，避免为半个字符引入浮点数。
     center_twice: usize,
 }
 
+/// 渲染与键盘纵向导航共享的完整手牌布局结果。
 struct HandLayout {
+    /// 已应用本地化、颜色和选中样式的文本行。
     lines: Vec<Line<'static>>,
+    /// 每张逻辑手牌对应的行号与水平中心。
     positions: Vec<HandCardPosition>,
+    /// 当前选中牌所在行，用于计算垂直滚动。
     selected_row: usize,
 }
 
+/// 按终端字符宽度对手牌进行贪心换行。
+///
+/// 每个条目的宽度通过 Ratatui 的 `Span::width` 计算，因此中文牌名等宽度
+/// 差异会同时反映在显示、滚动和键盘导航中。
 fn hand_layout(
     language: crate::i18n::Language,
     hand: &[crate::core::Card],
@@ -380,6 +425,7 @@ fn hand_layout(
 
     for (index, card) in hand.iter().enumerate() {
         let selected = index == selected_card;
+        // 序号、牌名和尾部分开着色，但整体共享同一个选中背景。
         let mut entry = vec![Span::styled(
             format!(" {}:[", index + 1),
             selected_style(Style::default().fg(TuiColor::Gray), selected),
@@ -391,11 +437,13 @@ fn hand_layout(
         ));
         let entry_width = entry.iter().map(Span::width).sum::<usize>();
 
+        // 单张牌即使超过可用宽度也保留在当前行，确保窄窗口下仍能选中。
         if !current_line.is_empty() && current_width + entry_width > width {
             lines.push(Line::from(current_line));
             current_line = Vec::new();
             current_width = 0;
         }
+        // 已提交的行数就是当前条目的行号；记录几何信息后再拼接 Span。
         let row = lines.len();
         positions.push(HandCardPosition {
             index,
@@ -420,6 +468,10 @@ fn hand_layout(
     }
 }
 
+/// 返回目标相邻行中横向位置最接近的手牌索引。
+///
+/// 该函数复用实际渲染的换行布局，供应用层处理上下方向键；不存在目标行时
+/// 保持当前选择不变。
 pub(crate) fn adjacent_hand_card(
     language: crate::i18n::Language,
     hand: &[crate::core::Card],
@@ -428,6 +480,8 @@ pub(crate) fn adjacent_hand_card(
     row_delta: isize,
 ) -> usize {
     let layout = hand_layout(language, hand, selected_card, width);
+    // 手牌为空或选择索引暂时越界时不擅自跳到其他牌；应用层会在状态更新后
+    // 负责收敛 selected_card。
     let Some(current) = layout
         .positions
         .iter()
@@ -435,6 +489,7 @@ pub(crate) fn adjacent_hand_card(
     else {
         return selected_card;
     };
+    // checked_add_signed 同时处理向上越过首行和向下的无符号加法。
     let Some(target_row) = current.row.checked_add_signed(row_delta) else {
         return selected_card;
     };
@@ -443,6 +498,7 @@ pub(crate) fn adjacent_hand_card(
         .positions
         .iter()
         .filter(|position| position.row == target_row)
+        // 首要选择水平中心最近的牌；距离相同时以较小索引稳定决胜。
         .min_by_key(|position| {
             (
                 position.center_twice.abs_diff(current.center_twice),
@@ -452,11 +508,14 @@ pub(crate) fn adjacent_hand_card(
         .map_or(selected_card, |position| position.index)
 }
 
+/// 在手牌完整显示与事件日志最低高度之间分配手牌区高度。
 fn hand_height(line_count: usize, area_height: u16, images_visible: bool) -> u16 {
+    // 两行用于边框；即使没有手牌也维持最小区域，保持整体布局稳定。
     let desired_height = u16::try_from(line_count)
         .unwrap_or(u16::MAX)
         .saturating_add(2)
         .max(MIN_HAND_HEIGHT);
+    // 图像牌桌比文字牌桌多占四行，这部分必须从手牌最大高度中扣除。
     let fixed_height = FIXED_GAME_HEIGHT + if images_visible { 4 } else { 0 };
     let max_height = area_height
         .saturating_sub(fixed_height + MIN_LOG_HEIGHT)
@@ -464,6 +523,7 @@ fn hand_height(line_count: usize, area_height: u16, images_visible: bool) -> u16
     desired_height.min(max_height)
 }
 
+/// 绘制任何终端都能显示的彩色文字牌桌。
 fn render_text_table(
     frame: &mut Frame<'_>,
     app: &App,
@@ -493,6 +553,7 @@ fn render_text_table(
     );
 }
 
+/// 将牌桌水平拆成“当前选择”和“弃牌堆顶”两个图像预览槽。
 fn render_image_table(
     frame: &mut Frame<'_>,
     app: &App,
@@ -504,6 +565,7 @@ fn render_image_table(
         .direction(LayoutDirection::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
+    // 选中索引可能因刚摸牌或出牌短暂越界，使用 Option 安全退回空状态。
     let selected_card = app
         .human_hand()
         .and_then(|hand| hand.get(app.selected_card))
@@ -532,6 +594,7 @@ fn render_image_table(
             app,
         );
     } else {
+        // 手牌为空时立即清除对应协议，不能让上一次选中的牌继续留在终端。
         graphics.clear_slot(PreviewSlot::Selected);
         frame.render_widget(
             Paragraph::new(app.language.text(Message::NoSelectedCard)).alignment(Alignment::Center),
@@ -559,6 +622,7 @@ fn render_image_table(
     );
 }
 
+/// 请求给定槽位的终端协议并绘制牌面，失败时原地使用文字替代。
 fn render_card_preview(
     frame: &mut Frame<'_>,
     graphics: &mut GraphicsRuntime,
@@ -572,6 +636,7 @@ fn render_card_preview(
         let image_area = centered_image_area(area, protocol.size());
         frame.render_widget(Image::new(protocol), image_area);
     } else {
+        // 协议不可用或编码失败时仍展示可玩的文字牌面。
         frame.render_widget(
             Paragraph::new(app.language.card(card)).alignment(Alignment::Center),
             area,
@@ -579,6 +644,7 @@ fn render_card_preview(
     }
 }
 
+/// 将协议实际生成的图像尺寸限制并居中到面板内部。
 fn centered_image_area(area: Rect, image_size: ratatui::layout::Size) -> Rect {
     let width = image_size.width.min(area.width);
     let height = image_size.height.min(area.height);
@@ -590,14 +656,18 @@ fn centered_image_area(area: Rect, image_size: ratatui::layout::Size) -> Rect {
     )
 }
 
+/// 计算保持选中行可见所需的最小纵向滚动量。
 fn hand_scroll(selected_row: usize, visible_rows: usize) -> usize {
+    // 只滚动到“刚好能看见选中行”，减少上下移动时的画面跳动。
     selected_row.saturating_add(1).saturating_sub(visible_rows)
 }
 
+/// 根据规则引擎返回的合法操作生成当前玩家提示。
 fn game_hint(app: &App) -> String {
     let game = app.game.as_ref().expect("game hint has game");
     let mut hints = Vec::new();
 
+    // AI 回合不暴露人类玩家的出牌、摸牌提示，只保留帮助和退出入口。
     if game.current_player() == &app.human_id
         && let Ok(actions) = game.legal_actions(&app.human_id)
     {
@@ -619,6 +689,7 @@ fn game_hint(app: &App) -> String {
     hints.join(" · ")
 }
 
+/// 绘制打出万能牌后的颜色选择弹窗。
 fn render_color_picker(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let popup = centered(area, 52, 7);
     frame.render_widget(Clear, popup);
@@ -647,6 +718,9 @@ fn render_color_picker(frame: &mut Frame<'_>, app: &App, area: Rect) {
     );
 }
 
+/// 清空居中区域并绘制通用模态覆盖层。
+///
+/// `Clear` 很重要：它先擦除主体的字符单元，避免透明背景下内容穿透弹窗。
 fn render_overlay(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -666,6 +740,7 @@ fn render_overlay(
     );
 }
 
+/// 在父区域内创建不超过其边界的居中矩形。
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
@@ -677,6 +752,7 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
     )
 }
 
+/// 将游戏规则中的颜色映射为终端调色板颜色。
 fn card_color(color: Color) -> TuiColor {
     match color {
         Color::Red => TuiColor::Red,
@@ -688,6 +764,10 @@ fn card_color(color: Color) -> TuiColor {
 
 // ===== * CARD LIGHTS * =====
 
+/// 生成一张文字牌面的彩色 Span。
+///
+/// `WildDrawSixteen` 被拆成多个 Span，以四种颜色突出其特殊牌面；其他牌
+/// 使用规则颜色，普通万能牌则使用洋红色。
 fn styled_card(
     language: crate::i18n::Language,
     card: crate::core::Card,
@@ -717,6 +797,7 @@ fn styled_card(
     vec![themed_span(language.card(card), color, selected)]
 }
 
+/// 创建带主题前景色并可继承选中背景的牌面片段。
 fn themed_span(
     content: impl Into<std::borrow::Cow<'static, str>>,
     color: TuiColor,
@@ -731,6 +812,7 @@ fn themed_span(
     )
 }
 
+/// 为当前选中的完整牌条目叠加统一高亮背景。
 fn selected_style(style: Style, selected: bool) -> Style {
     if selected {
         style.bg(TuiColor::White).add_modifier(Modifier::BOLD)
@@ -739,12 +821,14 @@ fn selected_style(style: Style, selected: bool) -> Style {
     }
 }
 
+/// 返回所有主题边框共享的样式。
 fn carnival_border() -> Style {
     Style::default()
         .fg(TuiColor::LightYellow)
         .add_modifier(Modifier::BOLD)
 }
 
+/// 构造统一使用圆角、亮色边框和标题样式的基础区块。
 fn carnival_block(title: &str) -> Block<'_> {
     Block::default()
         .borders(Borders::ALL)
@@ -879,18 +963,6 @@ mod tests {
     }
 
     #[test]
-    fn fitted_images_are_centered_inside_their_panels() {
-        assert_eq!(
-            centered_image_area(Rect::new(10, 5, 20, 10), ratatui::layout::Size::new(6, 4)),
-            Rect::new(17, 8, 6, 4)
-        );
-        assert_eq!(
-            centered_image_area(Rect::new(10, 5, 20, 10), ratatui::layout::Size::new(30, 20)),
-            Rect::new(10, 5, 20, 10)
-        );
-    }
-
-    #[test]
     fn image_previews_are_created_only_on_large_game_and_cleared_for_overlay() {
         use ratatui_image::picker::ProtocolType;
 
@@ -1021,6 +1093,18 @@ mod tests {
         assert_eq!(hand_height(6, 28, false), 8);
         assert_eq!(hand_height(20, 28, false), 11);
         assert_eq!(hand_height(20, 28, true), 7);
+    }
+
+    #[test]
+    fn fitted_images_are_centered_inside_their_panels() {
+        assert_eq!(
+            centered_image_area(Rect::new(10, 5, 20, 10), ratatui::layout::Size::new(6, 4)),
+            Rect::new(17, 8, 6, 4)
+        );
+        assert_eq!(
+            centered_image_area(Rect::new(10, 5, 20, 10), ratatui::layout::Size::new(30, 20)),
+            Rect::new(10, 5, 20, 10)
+        );
     }
 
     #[test]

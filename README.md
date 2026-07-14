@@ -10,7 +10,12 @@
 [![Release](https://github.com/Mcas-996/uno_online/actions/workflows/release.yml/badge.svg)](https://github.com/Mcas-996/uno_online/actions/workflows/release.yml)
 
 
-https://github.com/user-attachments/assets/d1b4b99b-929e-4755-9afa-341928041e72
+
+https://github.com/user-attachments/assets/37a3b0e1-1527-4067-b81b-d49c915f5e90
+
+
+
+
 
 
 ## Quick Start

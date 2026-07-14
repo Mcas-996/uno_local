@@ -3,7 +3,7 @@ name = "uno"
 edition = "2024"
 license = "AGPL-3.0-only"
 repository = "https://github.com/Mcas-996/uno_online"
-version = "0.5.4"
+version = "1.0.0-beta-2"
 
 [dependencies]
 crossterm = "0.29.0"

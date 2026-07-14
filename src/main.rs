@@ -54,24 +54,30 @@ fn print_help() {
     println!("The game runs fully offline. Configure 1-4 AI opponents in the TUI.");
 }
 
+/// 初始化终端、图形运行时和应用状态，并驱动逐帧事件循环。
 fn run_tui() -> io::Result<()> {
     install_panic_restore();
     let _guard = TerminalGuard::enter()?;
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
+    // 图形能力只在启动时探测一次，编码后的预览由运行时跨帧复用。
     let mut graphics = GraphicsRuntime::detect();
     terminal.clear()?;
     let mut app = App::new(Language::detect());
 
     while !app.should_exit {
+        // UI 读取应用状态，并通过可变图形运行时按需创建或释放预览协议。
         terminal.draw(|frame| ui::render(frame, &app, &mut graphics))?;
+        // 短轮询让键盘输入保持响应，同时保证没有输入时 AI 计时器仍会推进。
         if event::poll(Duration::from_millis(50))?
             && let Event::Key(key) = event::read()?
         {
             app.handle_key(key, terminal.size()?.width);
         }
+        // tick 只推进定时状态（目前是 AI 回合），渲染本身不修改游戏规则。
         app.tick();
     }
+    // 在清屏和恢复光标前先丢弃图像协议，防止终端保留牌面预览。
     graphics.suspend();
     terminal.clear()?;
     terminal.show_cursor()?;

@@ -43,8 +43,8 @@ impl Language {
             Message::Graphics => ("Graphics", "图像"),
             Message::Start => ("Start match", "开始游戏"),
             Message::SetupHint => (
-                "↑/↓ field  ←/→ value  type name  Enter start  Esc quit",
-                "↑/↓ 选择  ←/→ 调整  输入名称  Enter 开始  Esc 退出",
+                "Arrows/hjkl navigate · type name · Enter start · Esc quit",
+                "方向键/hjkl 导航 · 输入名称 · Enter 开始 · Esc 退出",
             ),
             Message::Opponents => ("Opponents", "对手"),
             Message::Table => ("Table", "牌桌"),
@@ -57,20 +57,23 @@ impl Language {
             Message::ActiveColor => ("Active color", "当前颜色"),
             Message::Direction => ("Direction", "方向"),
             Message::Cards => ("cards", "张牌"),
-            Message::PlayHint => ("Arrow keys select · Enter play", "方向键选牌 · Enter 出牌"),
+            Message::PlayHint => (
+                "Arrows/hjkl select · Enter play",
+                "方向键/hjkl 选牌 · Enter 出牌",
+            ),
             Message::DrawHint => ("D draw", "D 摸牌"),
             Message::PassHint => ("P pass", "P 跳过"),
             Message::GameUtilitiesHint => ("? help · Q quit", "? 帮助 · Q 退出"),
             Message::Command => ("Command", "命令"),
             Message::ChooseColor => ("Choose a color", "选择颜色"),
             Message::ColorHint => (
-                "←/→ choose  Enter confirm  Esc cancel",
-                "←/→ 选择  Enter 确认  Esc 取消",
+                "←/→ or h/l choose  Enter confirm  Esc cancel",
+                "←/→ 或 h/l 选择  Enter 确认  Esc 取消",
             ),
             Message::Help => ("Help", "帮助"),
             Message::HelpBody => (
-                "* STAR CARNIVAL *\n\nShortcuts\n  Arrow keys select  Enter play\n  D draw             P pass\n  : command          Q quit\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n\nCommands\n  play <index>  draw  pass\n  help          new   quit\n\nPress ? or Esc to return.",
-                "* 星光嘉年华 *\n\n快捷键\n  方向键选择手牌       Enter 出牌\n  D 摸牌             P 跳过\n  : 输入命令         Q 退出\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n\n命令\n  play <序号>   draw  pass\n  help          new   quit\n\n按 ? 或 Esc 返回。",
+                "* STAR CARNIVAL *\n\nShortcuts\n  Arrows/hjkl select  Enter play\n  D draw              P pass\n  : command           Q quit\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n\nCommands\n  play <index>  draw  pass\n  help          new   quit\n\nPress ? or Esc to return.",
+                "* 星光嘉年华 *\n\n快捷键\n  方向键/hjkl 选择手牌  Enter 出牌\n  D 摸牌              P 跳过\n  : 输入命令          Q 退出\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n\n命令\n  play <序号>   draw  pass\n  help          new   quit\n\n按 ? 或 Esc 返回。",
             ),
             Message::QuitTitle => ("Leave match?", "退出对局？"),
             Message::QuitBody => ("Y confirm · N/Esc cancel", "Y 确认 · N/Esc 取消"),
@@ -132,7 +135,13 @@ impl Language {
         }
     }
 
+    /// 生成人类可读的图形设置摘要。
+    ///
+    /// `choice` 表示用户偏好，`backend` 表示环境探测后的实际结果；两者分开
+    /// 传入，使自动降级不会被错误描述为用户主动选择文字模式。
     pub fn graphics(self, choice: GraphicsChoice, backend: GraphicsBackend) -> String {
+        // 设置页同时展示用户选择与实际后端；自动模式降级时保留具体原因，
+        // 便于用户判断是环境限制还是运行时编码错误。
         match (self, choice, backend) {
             (Self::English, GraphicsChoice::Text, _) => "Text (manual)".to_owned(),
             (Self::Chinese, GraphicsChoice::Text, _) => "文字（手动）".to_owned(),
@@ -353,5 +362,15 @@ mod tests {
             ),
             "自动（文字：SSH）"
         );
+    }
+
+    #[test]
+    fn navigation_hints_advertise_vim_keys_in_both_languages() {
+        for language in Language::ALL {
+            assert!(language.text(Message::SetupHint).contains("hjkl"));
+            assert!(language.text(Message::PlayHint).contains("hjkl"));
+            assert!(language.text(Message::ColorHint).contains("h/l"));
+            assert!(language.text(Message::HelpBody).contains("hjkl"));
+        }
     }
 }

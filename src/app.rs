@@ -34,6 +34,7 @@ pub struct Setup {
     pub bot_count: usize,
     pub difficulty: Difficulty,
     pub deck_variant: DeckVariant,
+    /// 用户选择的牌面显示策略；实际协议仍由 `GraphicsRuntime` 根据终端决定。
     pub graphics: GraphicsChoice,
     pub selected: usize,
 }
@@ -179,7 +180,14 @@ impl App {
     }
 
     fn handle_setup_key(&mut self, key: KeyEvent) {
-        match key.code {
+        // The name field remains a text input, so Vim keys only become
+        // navigation aliases after the player leaves that field.
+        let code = if self.setup.selected == 0 {
+            key.code
+        } else {
+            navigation_code(key)
+        };
+        match code {
             KeyCode::Up => self.setup.selected = self.setup.selected.saturating_sub(1),
             KeyCode::Down => self.setup.selected = (self.setup.selected + 1).min(6),
             KeyCode::Left => self.adjust_setup(-1),
@@ -246,6 +254,8 @@ impl App {
                 }
             }
             5 => {
+                // 此处只保存 Auto/Text 偏好，不在输入处理阶段探测或切换协议；
+                // UI 每帧通过 GraphicsRuntime 解析实际后端。
                 let index = GraphicsChoice::ALL
                     .iter()
                     .position(|candidate| *candidate == self.setup.graphics)
@@ -267,9 +277,12 @@ impl App {
             self.handle_color_key(key);
             return;
         }
-        match key.code {
+        let code = navigation_code(key);
+        match code {
             KeyCode::Up | KeyCode::Down => {
-                let row_delta = if key.code == KeyCode::Up { -1 } else { 1 };
+                let row_delta = if code == KeyCode::Up { -1 } else { 1 };
+                // 纵向导航必须使用 UI 的实际换行结果，才能在不同终端宽度下
+                // 选择视觉上最接近的上一行或下一行牌。
                 let selected_card = crate::ui::adjacent_hand_card(
                     self.language,
                     self.human_hand().unwrap_or_default(),
@@ -324,7 +337,7 @@ impl App {
     }
 
     fn handle_color_key(&mut self, key: KeyEvent) {
-        match key.code {
+        match navigation_code(key) {
             KeyCode::Left => self.selected_color = self.selected_color.saturating_sub(1),
             KeyCode::Right => self.selected_color = (self.selected_color + 1).min(3),
             KeyCode::Esc => self.pending_wild = None,
@@ -494,6 +507,21 @@ impl App {
         self.game
             .as_ref()
             .and_then(|game| game.hand_for(&self.human_id).ok())
+    }
+}
+
+/// Maps unmodified lowercase Vim movement keys to their arrow-key equivalents.
+/// Arrow keys and every non-navigation key pass through unchanged.
+fn navigation_code(key: KeyEvent) -> KeyCode {
+    if key.modifiers != KeyModifiers::NONE {
+        return key.code;
+    }
+    match key.code {
+        KeyCode::Char('h') => KeyCode::Left,
+        KeyCode::Char('j') => KeyCode::Down,
+        KeyCode::Char('k') => KeyCode::Up,
+        KeyCode::Char('l') => KeyCode::Right,
+        code => code,
     }
 }
 
@@ -706,7 +734,69 @@ mod tests {
             KeyEvent::new_with_kind(KeyCode::Right, KeyModifiers::NONE, KeyEventKind::Release),
             80,
         );
+        app.handle_key(
+            KeyEvent::new_with_kind(
+                KeyCode::Char('h'),
+                KeyModifiers::NONE,
+                KeyEventKind::Release,
+            ),
+            80,
+        );
+        app.handle_key(
+            KeyEvent::new_with_kind(
+                KeyCode::Char('l'),
+                KeyModifiers::NONE,
+                KeyEventKind::Release,
+            ),
+            80,
+        );
         assert_eq!(app.setup.bot_count, 3);
+    }
+
+    #[test]
+    fn setup_vim_keys_navigate_outside_the_name_field() {
+        let mut app = App::new(Language::English);
+
+        for character in ['h', 'j', 'k', 'l'] {
+            app.handle_key(
+                KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+                80,
+            );
+        }
+        assert_eq!(app.setup.name, "Playerhjkl");
+
+        app.setup.selected = 2;
+        app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), 80);
+        assert_eq!(app.setup.selected, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 80);
+        assert_eq!(app.setup.selected, 2);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 80);
+        assert_eq!(app.setup.difficulty, Difficulty::Easy);
+        app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE), 80);
+        assert_eq!(app.setup.difficulty, Difficulty::Normal);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT), 80);
+        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL), 80);
+        assert_eq!(app.setup.selected, 2);
+    }
+
+    #[test]
+    fn command_mode_keeps_vim_keys_as_text() {
+        let mut app = App::new(Language::English);
+        app.setup.bot_count = 1;
+        app.start_match().unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE), 80);
+
+        for character in ['h', 'j', 'k', 'l'] {
+            app.handle_key(
+                KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+                80,
+            );
+        }
+
+        assert!(app.command_mode);
+        assert_eq!(app.command, "hjkl");
     }
 
     #[test]
@@ -727,5 +817,39 @@ mod tests {
             12,
         );
         assert_eq!(app.selected_card, 1);
+    }
+
+    #[test]
+    fn game_vim_keys_move_in_all_four_directions() {
+        let mut app = App::new(Language::English);
+        app.setup.bot_count = 1;
+        app.start_match().unwrap();
+        app.selected_card = 1;
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 12);
+        assert_eq!(app.selected_card, 0);
+        app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE), 12);
+        assert_eq!(app.selected_card, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), 12);
+        assert_eq!(app.selected_card, 0);
+        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 12);
+        assert_eq!(app.selected_card, 1);
+    }
+
+    #[test]
+    fn color_picker_accepts_h_and_l_only() {
+        let mut app = App::new(Language::English);
+        app.setup.bot_count = 1;
+        app.start_match().unwrap();
+        app.pending_wild = Some(Card::wild(crate::core::Rank::Wild));
+        app.selected_color = 1;
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 80);
+        assert_eq!(app.selected_color, 0);
+        app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE), 80);
+        assert_eq!(app.selected_color, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 80);
+        app.handle_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT), 80);
+        assert_eq!(app.selected_color, 1);
     }
 }

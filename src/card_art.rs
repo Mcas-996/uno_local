@@ -15,8 +15,13 @@ const YELLOW: Rgba<u8> = Rgba([245, 194, 38, 255]);
 const GREEN: Rgba<u8> = Rgba([46, 157, 82, 255]);
 const BLUE: Rgba<u8> = Rgba([46, 102, 210, 255]);
 
+/// 生成与语言无关的固定尺寸 RGBA 牌面。
+///
+/// 图形运行时会按牌缓存该位图，再根据各预览区域的尺寸编码为终端协议数据。
 pub fn generate_card_art(card: Card) -> DynamicImage {
+    // 从透明画布开始，确保 Fit 缩放后牌角以外不会出现不透明方框。
     let mut image = RgbaImage::from_pixel(CARD_WIDTH, CARD_HEIGHT, TRANSPARENT);
+    // 三层圆角矩形依次构成外框、白色内框和按牌色填充的主体。
     rounded_rect(&mut image, 0, 0, CARD_WIDTH, CARD_HEIGHT, 18, BLACK);
     rounded_rect(
         &mut image,
@@ -37,6 +42,7 @@ pub fn generate_card_art(card: Card) -> DynamicImage {
         card.color.map_or(BLACK, color_rgba),
     );
 
+    // 万能牌使用四色背景和深色中央椭圆；普通牌则用白色椭圆形成对比。
     if card.is_wild() {
         wild_quadrants(&mut image);
         ellipse(&mut image, 34, 64, 112, 142, BLACK);
@@ -45,6 +51,7 @@ pub fn generate_card_art(card: Card) -> DynamicImage {
     }
 
     let ink = if card.is_wild() { WHITE } else { BLACK };
+    // 禁止牌使用图形符号，其余牌共用字符点阵，避免依赖系统字体和语言环境。
     if card.rank == Rank::Skip {
         draw_block_symbol(&mut image, 90, 135, 43, 8, ink);
         draw_block_symbol(&mut image, 36, 42, 17, 4, WHITE);
