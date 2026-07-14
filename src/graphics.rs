@@ -117,7 +117,6 @@ struct CachedProtocol {
 pub struct GraphicsRuntime {
     picker: Option<Picker>,
     detected_backend: GraphicsBackend,
-    is_wezterm: bool,
     art: HashMap<Card, image::DynamicImage>,
     selected: Option<CachedProtocol>,
     discard: Option<CachedProtocol>,
@@ -154,7 +153,6 @@ impl GraphicsRuntime {
         Self {
             picker,
             detected_backend,
-            is_wezterm: environment.is_wezterm,
             art: HashMap::new(),
             selected: None,
             discard: None,
@@ -233,14 +231,11 @@ impl GraphicsRuntime {
             .entry(key.card)
             .or_insert_with(|| generate_card_art(key.card))
             .clone();
-        let mut protocol = self
+        let protocol = self
             .picker
             .as_ref()
             .expect("image backend retains picker")
             .new_protocol(image, key.size, Resize::Fit(None))?;
-        if self.is_wezterm {
-            remove_wezterm_clear_prefix(&mut protocol);
-        }
         let cached = Some(CachedProtocol { key, protocol });
         match slot {
             PreviewSlot::Selected => self.selected = cached,
@@ -251,19 +246,6 @@ impl GraphicsRuntime {
             self.encodes += 1;
         }
         Ok(())
-    }
-}
-
-fn remove_wezterm_clear_prefix(protocol: &mut Protocol) {
-    let Protocol::ITerm2(iterm2) = protocol else {
-        return;
-    };
-    if iterm2.is_tmux {
-        return;
-    }
-
-    if let Some(image_command) = iterm2.data.find("\x1b]1337;") {
-        iterm2.data.drain(..image_command);
     }
 }
 
@@ -324,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn wezterm_iterm2_data_starts_at_the_image_command() {
+    fn wezterm_iterm2_data_clears_the_previous_image_area() {
         use crate::core::{Color, Rank};
 
         let environment = TerminalEnvironment {
@@ -343,7 +325,10 @@ mod tests {
             panic!("WezTerm should encode an iTerm2 image");
         };
 
-        assert!(iterm2.data.starts_with("\x1b]1337;"));
+        let clear_row = format!("\x1b[{}X\x1b[1B", iterm2.size.width);
+        let return_to_top = format!("\x1b[{}A\x1b]1337;", iterm2.size.height);
+        assert!(iterm2.data.starts_with(&clear_row));
+        assert!(iterm2.data.contains(&return_to_top));
     }
 
     #[test]
