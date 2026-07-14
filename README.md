@@ -50,7 +50,7 @@ Release artifacts and installers are built with [cargo-dist](https://github.com/
 This project is licensed under the [GNU Affero General Public License v3.0 only](LICENSE).
 
 ## For developer
-This README.md is for quick start & acknowledgements, for docs, please go to [developement.md](docs/development.md)
+This README.md is for quick start & acknowledgements, for docs, please go to [developement.md](docs/development.md), if you are curious why is there an extra repository in [here](external/debug), read [this](docs/extra_info.md).
 
 ## Issue
 

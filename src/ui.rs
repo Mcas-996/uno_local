@@ -23,7 +23,9 @@ pub const MIN_HEIGHT: u16 = 22;
 /// 启用图像牌面所需的最小终端高度。
 pub const IMAGE_MIN_HEIGHT: u16 = 26;
 
+/// 手牌区域的最小总高度，包含上下边框。
 const MIN_HAND_HEIGHT: u16 = 5;
+/// 事件日志区域的最小总高度，包含上下边框。
 const MIN_LOG_HEIGHT: u16 = 3;
 // 除牌桌和手牌外，标题、对手、日志下限、页脚及各区边框占用的总高度。
 const FIXED_GAME_HEIGHT: u16 = 14;
@@ -391,7 +393,9 @@ fn hand_lines(
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// 一张手牌在响应式文本布局中的几何位置。
 struct HandCardPosition {
+    /// 牌在 `Game` 手牌数组中的索引，也是左右移动时使用的逻辑位置。
     index: usize,
+    /// 贪心换行后所在的零基文本行。
     row: usize,
     // 使用中心横坐标的两倍值，避免为半个字符引入浮点数。
     center_twice: usize,
@@ -561,6 +565,8 @@ fn render_image_table(
     area: Rect,
     graphics: &mut GraphicsRuntime,
 ) {
+    // 两个槽位拥有独立边框和协议缓存。使用百分比可让奇数宽度的余量由
+    // Ratatui 稳定分配，而不在这里重复处理坐标取整。
     let columns = Layout::default()
         .direction(LayoutDirection::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -646,6 +652,8 @@ fn render_card_preview(
 
 /// 将协议实际生成的图像尺寸限制并居中到面板内部。
 fn centered_image_area(area: Rect, image_size: ratatui::layout::Size) -> Rect {
+    // protocol.size() 是编码器在保持宽高比后选出的单元格尺寸，并不保证
+    // 填满请求区域；先限制到父区域，再用剩余空间的一半计算居中偏移。
     let width = image_size.width.min(area.width);
     let height = image_size.height.min(area.height);
     Rect::new(
@@ -697,6 +705,8 @@ fn render_color_picker(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .into_iter()
         .enumerate()
         .flat_map(|(index, color)| {
+            // 所有颜色选项在同一行显示；选中项用白底强调，同时保留前景色，
+            // 使用户仍能直接看到即将激活的规则颜色。
             let mut style = Style::default().fg(card_color(color));
             if index == app.selected_color {
                 style = style.bg(TuiColor::White).add_modifier(Modifier::BOLD);
