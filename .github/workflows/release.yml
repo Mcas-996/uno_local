@@ -140,6 +140,8 @@ jobs:
         run: |
           ${{ matrix.packages_install }}
       - name: Build artifacts
+        env:
+          UNO_GIT_COMMIT: ${{ github.sha }}
         run: |
           # Actually do builds and make zips and whatnot
           dist build ${{ needs.plan.outputs.tag-flag }} --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json

@@ -8,6 +8,7 @@ Automated tests validate backend resolution, generated pixels, caching, responsi
 2. Edit the player name and select 1, 2, 3, and 4 AI opponents in separate runs.
 3. Confirm Easy, Normal, and Hard can each start a match.
 4. Run `uno --help` and confirm it exits without entering raw terminal mode.
+5. From a directory without Cargo or Git files, run `uno -v` and `uno --version`; confirm both print the same package version and 12-character Git commit, then exit without entering raw terminal mode.
 
 ## Gameplay
 

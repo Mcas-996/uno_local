@@ -83,13 +83,14 @@ To run with an optimized release configuration:
 cargo run --release
 ```
 
-To view command-line help without entering the terminal interface:
+To view command-line help or the current build information without entering the terminal interface:
 
 ```console
 cargo run -- --help
+cargo run -- --version
 ```
 
-The `--` directive passes the following `--help` to the `uno` program, not Cargo. The current program does not accept other positional arguments; all game options are configured in the TUI settings page.
+The `--` separator passes the following argument to `uno` instead of Cargo. `-v` and `--version` are equivalent; the output contains both the Cargo package version and the 12-character Git commit for the build. The program does not accept other positional arguments; all game options are configured in the TUI settings page.
 
 ## Building and Running Binaries
 
@@ -110,6 +111,14 @@ Release Build:
 cargo build --release
 ```
 The corresponding program is located in the `target/release/` directory.
+
+After building, you can query its version from any directory, for example:
+
+```console
+target/release/uno --version
+```
+
+The version and commit are embedded in the executable at compile time. A release installed with the script in the README can likewise run `uno --version` without reading `Cargo.toml`, `Cargo.lock`, or `.git` at runtime.
 
 ## Development Checks
 

@@ -59,13 +59,14 @@ cargo run
 cargo run --release
 ```
 
-查看命令行帮助而不进入终端界面：
+查看命令行帮助或当前构建的版本信息，而不进入终端界面：
 
 ```console
 cargo run -- --help
+cargo run -- --version
 ```
 
-`--` 用于将后面的 `--help` 传递给 `uno` 程序，而不是 Cargo。当前程序不接受其他位置参数，所有对局选项都在 TUI 设置页面中完成。
+`--` 用于将后面的参数传递给 `uno` 程序，而不是 Cargo。`-v` 与 `--version` 等价，版本输出同时包含 Cargo 包版本和构建所对应的 12 位 Git 提交号。当前程序不接受其他位置参数，所有对局选项都在 TUI 设置页面中完成。
 
 ## 构建与运行二进制文件
 
@@ -87,6 +88,14 @@ cargo build --release
 ```
 
 对应的程序位于 `target/release/` 目录。
+
+构建后可以从任意目录查询版本，例如：
+
+```console
+target/release/uno --version
+```
+
+版本号和提交号已在编译时写入可执行文件。通过 README 中的安装脚本获得的发布版同样可以直接运行 `uno --version`，不会在运行时读取 `Cargo.toml`、`Cargo.lock` 或 `.git`。
 
 ## 开发检查
 

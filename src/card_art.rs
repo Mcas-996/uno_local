@@ -1,12 +1,19 @@
-//! Programmatically generated, language-neutral UNO card faces.
+//! 以代码生成、与界面语言无关的 UNO 牌面位图。
+//!
+//! 本模块不依赖系统字体或外部图片资源：圆角矩形、椭圆、禁止符号和 5×7
+//! 点阵字形都直接写入 RGBA 像素。固定尺寸原图由 `graphics` 模块缓存，随后
+//! 再按终端预览区域缩放并编码。
 
 use image::{DynamicImage, Rgba, RgbaImage};
 
 use crate::core::{Card, Color, Rank};
 
+/// 生成牌面的固定像素宽度。
 pub const CARD_WIDTH: u32 = 180;
+/// 生成牌面的固定像素高度，保持 2:3 的牌面比例。
 pub const CARD_HEIGHT: u32 = 270;
 
+// 颜色全部使用不透明 RGBA；仅牌面圆角以外保留透明背景。
 const TRANSPARENT: Rgba<u8> = Rgba([0, 0, 0, 0]);
 const BLACK: Rgba<u8> = Rgba([18, 18, 24, 255]);
 const WHITE: Rgba<u8> = Rgba([250, 246, 225, 255]);
@@ -75,6 +82,7 @@ pub fn generate_card_art(card: Card) -> DynamicImage {
     DynamicImage::ImageRgba8(image)
 }
 
+/// 将规则层的四色枚举映射为牌面调色板。
 fn color_rgba(color: Color) -> Rgba<u8> {
     match color {
         Color::Red => RED,
@@ -84,6 +92,9 @@ fn color_rgba(color: Color) -> Rgba<u8> {
     }
 }
 
+/// 返回点阵字体能够绘制的短牌面标签。
+///
+/// 禁止牌由专用几何图形绘制，因此若传入 `Skip` 说明调用路径有误。
 fn rank_label(rank: Rank) -> &'static str {
     match rank {
         Rank::Number(0) => "0",
@@ -107,6 +118,10 @@ fn rank_label(rank: Rank) -> &'static str {
     }
 }
 
+/// 用逐像素距离判断填充一个轴对齐圆角矩形。
+///
+/// 中间的水平或垂直条带天然位于圆角矩形内部；只有同时落在角部的像素
+/// 才需要通过到圆心的平方距离测试。
 fn rounded_rect(
     image: &mut RgbaImage,
     x: u32,
@@ -141,6 +156,10 @@ fn rounded_rect(
     }
 }
 
+/// 填充指定外接矩形内的椭圆。
+///
+/// 坐标整体放大两倍并以像素中心参与计算，既避免浮点误差，也让奇偶尺寸
+/// 下的图形保持对称。
 fn ellipse(image: &mut RgbaImage, x: u32, y: u32, width: u32, height: u32, color: Rgba<u8>) {
     let cx = x as i64 * 2 + width as i64;
     let cy = y as i64 * 2 + height as i64;
@@ -157,6 +176,7 @@ fn ellipse(image: &mut RgbaImage, x: u32, y: u32, width: u32, height: u32, color
     }
 }
 
+/// 用红、黄、绿、蓝四块背景构造万能牌主体。
 fn wild_quadrants(image: &mut RgbaImage) {
     let regions = [
         (12, 12, 78, 123, RED),
@@ -169,6 +189,7 @@ fn wild_quadrants(image: &mut RgbaImage) {
     }
 }
 
+/// 绘制由圆环和左上至右下斜杠组成的禁止符号。
 fn draw_block_symbol(
     image: &mut RgbaImage,
     center_x: i32,
@@ -188,6 +209,7 @@ fn draw_block_symbol(
             let dx = x - center_x;
             let dy = y - center_y;
             let distance_squared = dx * dx + dy * dy;
+            // 同一轮扫描同时判断圆环和斜杠，避免两次遍历与边缘覆盖问题。
             let on_ring = distance_squared >= inner_radius * inner_radius
                 && distance_squared <= radius * radius;
             let on_slash = (dy - dx) * (dy - dx) <= 2 * slash_half_width * slash_half_width
@@ -199,6 +221,7 @@ fn draw_block_symbol(
     }
 }
 
+/// 按点阵文本的实际宽度将标签水平居中，并让其垂直中心落在 `center_y`。
 fn draw_centered_text(
     image: &mut RgbaImage,
     text: &str,
@@ -219,10 +242,14 @@ fn draw_centered_text(
     );
 }
 
+/// 计算 5 像素字宽、1 像素字距的点阵文本缩放后宽度。
 fn text_width(text: &str, scale: u32) -> u32 {
     text.chars().count() as u32 * 6 * scale - scale
 }
 
+/// 将每个 5×7 字形的置位像素扩展为 `scale × scale` 色块。
+///
+/// 边界检查使右下角标签即使因未来字形变化稍微越界也不会写出画布。
 fn draw_text(image: &mut RgbaImage, text: &str, mut x: u32, y: u32, scale: u32, color: Rgba<u8>) {
     for character in text.chars() {
         let glyph = glyph(character);
@@ -245,6 +272,9 @@ fn draw_text(image: &mut RgbaImage, text: &str, mut x: u32, y: u32, scale: u32, 
     }
 }
 
+/// 返回一个 5×7 单色字形；每行低五位从高位到低位对应从左到右的像素。
+///
+/// 未知字符使用问号，这使新增牌面标签在补充字形前仍可被识别和测试。
 fn glyph(character: char) -> [u8; 7] {
     match character {
         '0' => [

@@ -40,6 +40,10 @@ fn run(args: Vec<String>) -> Result<(), String> {
             print_help();
             Ok(())
         }
+        [argument] if matches!(argument.as_str(), "--version" | "-v") => {
+            print_version();
+            Ok(())
+        }
         [argument] => Err(format!("unknown argument '{argument}'; run uno --help")),
         _ => Err("uno does not accept positional arguments; run uno --help".to_owned()),
     }
@@ -48,10 +52,21 @@ fn run(args: Vec<String>) -> Result<(), String> {
 fn print_help() {
     println!("uno - local terminal UNO against AI");
     println!();
-    println!("Usage: uno");
-    println!("       uno --help");
+    println!("Usage: uno [OPTIONS]");
+    println!();
+    println!("Options:");
+    println!("  -h, --help       Print help");
+    println!("  -v, --version    Print version");
     println!();
     println!("The game runs fully offline. Configure 1-4 AI opponents in the TUI.");
+}
+
+fn print_version() {
+    println!(
+        "uno {} (commit {})",
+        env!("CARGO_PKG_VERSION"),
+        env!("UNO_GIT_COMMIT")
+    );
 }
 
 /// 初始化终端、图形运行时和应用状态，并驱动逐帧事件循环。
@@ -123,6 +138,8 @@ mod tests {
     #[test]
     fn help_and_unknown_arguments_are_safe() {
         assert!(run(vec!["--help".to_owned()]).is_ok());
+        assert!(run(vec!["--version".to_owned()]).is_ok());
+        assert!(run(vec!["-v".to_owned()]).is_ok());
         assert!(
             run(vec!["host".to_owned()])
                 .unwrap_err()

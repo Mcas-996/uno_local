@@ -140,6 +140,9 @@ pub enum PreviewSlot {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// 判断某个槽位的协议缓存是否仍可复用的完整条件。
+///
+/// 协议数据同时包含图像内容和目标单元格尺寸，所以仅比较牌面并不充分。
 struct ProtocolKey {
     /// 当前槽位展示的牌；牌变化后协议数据必须重新编码。
     card: Card,
@@ -190,6 +193,10 @@ impl GraphicsRuntime {
         }
     }
 
+    /// 将环境信息和可选探测器归一化为内部状态。
+    ///
+    /// 所有构造路径（真实探测与测试替身）都经过这里，从而共享相同的后端
+    /// 选择规则以及“文字模式不保留编码器”的不变量。
     fn from_picker(environment: TerminalEnvironment, mut picker: Option<Picker>) -> Self {
         // WezTerm 的 iTerm2 实现能保留完整分辨率，优先于探测器的半块字符结果。
         if environment.is_wezterm
@@ -216,11 +223,13 @@ impl GraphicsRuntime {
     }
 
     #[cfg(test)]
+    /// 构造固定为文字后端的测试运行时，避免测试访问真实终端。
     pub fn text_for_tests() -> Self {
         Self::from_picker(TerminalEnvironment::default(), None)
     }
 
     #[cfg(test)]
+    /// 构造使用指定协议的测试运行时，避免发送能力查询序列。
     pub fn with_protocol_for_tests(protocol_type: ProtocolType) -> Self {
         let mut picker = Picker::halfblocks();
         picker.set_protocol_type(protocol_type);
@@ -293,8 +302,14 @@ impl GraphicsRuntime {
         }
     }
 
+    /// 为一个预览槽生成协议数据并原子地替换该槽位缓存。
+    ///
+    /// 只有完整编码成功后才写入缓存，因此错误不会留下与 `key` 不匹配的
+    /// 半成品。调用方负责把错误转换为整个运行期的稳定文字降级。
     fn encode(&mut self, slot: PreviewSlot, key: ProtocolKey) -> Result<(), Errors> {
         // 原始位图仅与牌面有关；协议缓存还与预览区域尺寸有关。
+        // 克隆 DynamicImage 可结束对 art 的可变借用，随后才能再次借用 self
+        // 中的 picker 和槽位字段；原图本身仍保留在一级缓存中供后续尺寸复用。
         let image = self
             .art
             .entry(key.card)
