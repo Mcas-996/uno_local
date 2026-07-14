@@ -320,7 +320,31 @@ fn hand_lines(
     selected_card: usize,
     width: usize,
 ) -> (Vec<Line<'static>>, usize) {
+    let layout = hand_layout(language, hand, selected_card, width);
+    (layout.lines, layout.selected_row)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct HandCardPosition {
+    index: usize,
+    row: usize,
+    center_twice: usize,
+}
+
+struct HandLayout {
+    lines: Vec<Line<'static>>,
+    positions: Vec<HandCardPosition>,
+    selected_row: usize,
+}
+
+fn hand_layout(
+    language: crate::i18n::Language,
+    hand: &[crate::core::Card],
+    selected_card: usize,
+    width: usize,
+) -> HandLayout {
     let mut lines = Vec::new();
+    let mut positions = Vec::with_capacity(hand.len());
     let mut current_line = Vec::new();
     let mut current_width = 0;
     let mut selected_row = 0;
@@ -343,8 +367,14 @@ fn hand_lines(
             current_line = Vec::new();
             current_width = 0;
         }
+        let row = lines.len();
+        positions.push(HandCardPosition {
+            index,
+            row,
+            center_twice: current_width.saturating_mul(2).saturating_add(entry_width),
+        });
         if selected {
-            selected_row = lines.len();
+            selected_row = row;
         }
         current_line.extend(entry);
         current_width += entry_width;
@@ -354,7 +384,43 @@ fn hand_lines(
         lines.push(Line::from(current_line));
     }
 
-    (lines, selected_row)
+    HandLayout {
+        lines,
+        positions,
+        selected_row,
+    }
+}
+
+pub(crate) fn adjacent_hand_card(
+    language: crate::i18n::Language,
+    hand: &[crate::core::Card],
+    selected_card: usize,
+    width: usize,
+    row_delta: isize,
+) -> usize {
+    let layout = hand_layout(language, hand, selected_card, width);
+    let Some(current) = layout
+        .positions
+        .iter()
+        .find(|position| position.index == selected_card)
+    else {
+        return selected_card;
+    };
+    let Some(target_row) = current.row.checked_add_signed(row_delta) else {
+        return selected_card;
+    };
+
+    layout
+        .positions
+        .iter()
+        .filter(|position| position.row == target_row)
+        .min_by_key(|position| {
+            (
+                position.center_twice.abs_diff(current.center_twice),
+                position.index,
+            )
+        })
+        .map_or(selected_card, |position| position.index)
 }
 
 fn hand_height(line_count: usize, area_height: u16) -> u16 {
@@ -657,6 +723,39 @@ mod tests {
         assert_eq!(scroll, 3);
         assert!(selected_row >= scroll);
         assert!(selected_row < scroll + visible_rows);
+    }
+
+    #[test]
+    fn vertical_hand_navigation_chooses_the_nearest_horizontal_card() {
+        let cards = (0..5)
+            .map(|number| Card::new(Color::Red, Rank::Number(number)))
+            .collect::<Vec<_>>();
+
+        assert_eq!(adjacent_hand_card(Language::English, &cards, 2, 37, 1), 4);
+        assert_eq!(adjacent_hand_card(Language::English, &cards, 4, 37, -1), 1);
+    }
+
+    #[test]
+    fn vertical_hand_navigation_stops_at_the_first_and_last_rows() {
+        let cards = (0..5)
+            .map(|number| Card::new(Color::Blue, Rank::Number(number)))
+            .collect::<Vec<_>>();
+
+        assert_eq!(adjacent_hand_card(Language::English, &cards, 0, 25, -1), 0);
+        assert_eq!(adjacent_hand_card(Language::English, &cards, 4, 25, 1), 4);
+    }
+
+    #[test]
+    fn vertical_hand_navigation_uses_localized_card_widths() {
+        let cards = (0..6)
+            .map(|number| Card::new(Color::Yellow, Rank::Number(number)))
+            .collect::<Vec<_>>();
+
+        let target = adjacent_hand_card(Language::Chinese, &cards, 1, 24, 1);
+
+        assert!(target > 1);
+        let layout = hand_layout(Language::Chinese, &cards, target, 24);
+        assert_eq!(layout.positions[target].row, 1);
     }
 
     #[test]

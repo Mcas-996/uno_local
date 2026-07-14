@@ -64,7 +64,7 @@ fn run_tui() -> io::Result<()> {
         if event::poll(Duration::from_millis(50))?
             && let Event::Key(key) = event::read()?
         {
-            app.handle_key(key);
+            app.handle_key(key, terminal.size()?.width);
         }
         app.tick();
     }

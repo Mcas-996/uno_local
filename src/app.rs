@@ -128,7 +128,7 @@ impl App {
         Ok(())
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) {
+    pub fn handle_key(&mut self, key: KeyEvent, terminal_width: u16) {
         // Terminals using an enhanced keyboard protocol report both press and
         // release events. A release must not apply the same action twice.
         if key.kind == KeyEventKind::Release {
@@ -140,7 +140,7 @@ impl App {
         }
         match self.screen {
             Screen::Setup => self.handle_setup_key(key),
-            Screen::Game => self.handle_game_key(key),
+            Screen::Game => self.handle_game_key(key, terminal_width),
             Screen::Help => {
                 if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
                     self.screen = self.previous_screen;
@@ -246,7 +246,7 @@ impl App {
         }
     }
 
-    fn handle_game_key(&mut self, key: KeyEvent) {
+    fn handle_game_key(&mut self, key: KeyEvent, terminal_width: u16) {
         if self.command_mode {
             self.handle_command_key(key);
             return;
@@ -256,6 +256,17 @@ impl App {
             return;
         }
         match key.code {
+            KeyCode::Up | KeyCode::Down => {
+                let row_delta = if key.code == KeyCode::Up { -1 } else { 1 };
+                let selected_card = crate::ui::adjacent_hand_card(
+                    self.language,
+                    self.human_hand().unwrap_or_default(),
+                    self.selected_card,
+                    terminal_width.saturating_sub(2) as usize,
+                    row_delta,
+                );
+                self.selected_card = selected_card;
+            }
             KeyCode::Left => self.selected_card = self.selected_card.saturating_sub(1),
             KeyCode::Right => {
                 let len = self.human_hand().map_or(0, <[Card]>::len);
@@ -651,30 +662,46 @@ mod tests {
         let mut app = App::new(Language::English);
 
         app.setup.selected = 2;
-        app.handle_key(KeyEvent::new_with_kind(
-            KeyCode::Up,
-            KeyModifiers::NONE,
-            KeyEventKind::Release,
-        ));
-        app.handle_key(KeyEvent::new_with_kind(
-            KeyCode::Down,
-            KeyModifiers::NONE,
-            KeyEventKind::Release,
-        ));
+        app.handle_key(
+            KeyEvent::new_with_kind(KeyCode::Up, KeyModifiers::NONE, KeyEventKind::Release),
+            80,
+        );
+        app.handle_key(
+            KeyEvent::new_with_kind(KeyCode::Down, KeyModifiers::NONE, KeyEventKind::Release),
+            80,
+        );
         assert_eq!(app.setup.selected, 2);
 
         app.setup.selected = 1;
         app.setup.bot_count = 3;
-        app.handle_key(KeyEvent::new_with_kind(
-            KeyCode::Left,
-            KeyModifiers::NONE,
-            KeyEventKind::Release,
-        ));
-        app.handle_key(KeyEvent::new_with_kind(
-            KeyCode::Right,
-            KeyModifiers::NONE,
-            KeyEventKind::Release,
-        ));
+        app.handle_key(
+            KeyEvent::new_with_kind(KeyCode::Left, KeyModifiers::NONE, KeyEventKind::Release),
+            80,
+        );
+        app.handle_key(
+            KeyEvent::new_with_kind(KeyCode::Right, KeyModifiers::NONE, KeyEventKind::Release),
+            80,
+        );
         assert_eq!(app.setup.bot_count, 3);
+    }
+
+    #[test]
+    fn game_up_and_down_keys_move_between_visual_hand_rows() {
+        let mut app = App::new(Language::English);
+        app.setup.bot_count = 1;
+        app.start_match().unwrap();
+        app.selected_card = 1;
+
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), 12);
+        assert_eq!(app.selected_card, 0);
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 12);
+        assert_eq!(app.selected_card, 1);
+
+        app.handle_key(
+            KeyEvent::new_with_kind(KeyCode::Down, KeyModifiers::NONE, KeyEventKind::Release),
+            12,
+        );
+        assert_eq!(app.selected_card, 1);
     }
 }
