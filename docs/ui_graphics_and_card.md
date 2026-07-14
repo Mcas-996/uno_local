@@ -13,11 +13,12 @@ main.rs 事件循环
 ui.rs
   ├─ 读取 App 和公开游戏状态，决定页面、布局、文字样式与覆盖层
   ├─ 文字模式：直接用 Ratatui 组件绘制
-  └─ 图像模式：为两个 PreviewSlot 请求终端协议
+  └─ 图像模式：取得拟合尺寸、决定居中 Rect，再为两个 PreviewSlot 请求协议
           ▼
       graphics.rs
         ├─ 探测终端并选择 iTerm2、Sixel、Kitty 或文字后端
-        ├─ 缓存原始牌面和已编码协议
+        ├─ 根据字体单元与面板空间计算协议尺寸
+        ├─ 缓存原始牌面和按最终 Rect 编码的协议
         └─ 缓存未命中时调用 generate_card_art
                 ▼
             card_art.rs
@@ -42,7 +43,7 @@ ui.rs
 
 ### 设置页和游戏页
 
-设置页由标题、选项列表和操作提示三个纵向区域组成。选项数组的顺序必须与 `app::adjust_setup` 使用的字段索引保持一致。图形设置显示的是用户选择与 `effective_backend` 共同决定的实际结果，例如自动探测成功的协议或带原因的文字降级。
+设置页由标题、选项列表和操作提示三个纵向区域组成。选项数组的顺序必须与 `app::adjust_setup` 使用的字段索引保持一致。图形设置显示的是用户选择与 `effective_backend` 共同决定的实际结果，例如 Beta 图像使用的协议或带原因的文字降级。
 
 游戏页使用六个纵向区域：
 
@@ -78,7 +79,7 @@ ui.rs
 - `PreviewSlot::Selected`：人类玩家当前选中的手牌；手牌为空或索引暂时越界时清除此槽位。
 - `PreviewSlot::Discard`：弃牌堆顶，同时在标题显示生效颜色。
 
-`render_card_preview` 把面板内部尺寸交给图形运行时。编码器为保持牌面比例，返回的实际图像尺寸可能小于请求区域，`centered_image_area` 会将它限制并居中。若协议生成失败，该位置立即绘制本地化的文字牌名，因此对局仍可继续。
+`render_card_preview` 先把面板内部尺寸交给 `GraphicsRuntime::fit_size`。这个调用按牌面、探测到的字体单元和 `Resize::Fit` 计算协议尺寸，但不执行 PNG/base64 编码。`centered_image_area` 再把拟合结果限制并居中为最终 `Rect`，最后将完整矩形交给 `GraphicsRuntime::protocol`。这样 UI 仍拥有布局决定权，graphics 仍拥有缩放与协议细节；若任一步失败，该位置立即绘制本地化的文字牌名，因此对局仍可继续。
 
 ### 覆盖层和主题
 
@@ -92,12 +93,12 @@ ui.rs
 
 `GraphicsChoice` 是设置页的策略，目前有：
 
-- `Auto`：使用启动时探测出的可用协议。
-- `Text`：用户强制使用文字牌面。
+- `Text`：使用文字牌面，也是除 Windows Terminal 外的默认选择。
+- `GraphicsBeta`：使用启动时探测出的可用协议，并在设置页标记为 `Graphics (Beta)`。
 
-`GraphicsBackend` 表示实际结果：`Iterm2`、`Sixel`、`Kitty`，或携带 `FallbackReason` 的 `Text`。文字降级原因分为用户手动选择、SSH、安全兼容性不足和运行时编码失败。
+`GraphicsBackend` 表示实际结果：`Iterm2`、`Sixel`、`Kitty`，或携带 `FallbackReason` 的 `Text`。文字结果的原因分为设置页选择 Text（可能是环境默认值）、SSH、安全兼容性不足和运行时编码失败。
 
-`effective_backend` 只在读取时应用用户选择，不覆盖启动探测结果。因此从 `Text` 切回 `Auto` 后，可以恢复已发现的图像协议，无需再次探测。
+`effective_backend` 只在读取时应用用户选择，不覆盖启动探测结果。因此从 `Text` 切到 `GraphicsBeta` 后，可以恢复已发现的图像协议，无需再次探测。
 
 ### 环境识别与后端优先级
 
@@ -106,6 +107,8 @@ ui.rs
 - `SSH_CONNECTION`、`SSH_CLIENT` 或 `SSH_TTY` 非空表示 SSH；
 - `WEZTERM_EXECUTABLE` 或包含 `WezTerm` 的 `TERM_PROGRAM` 表示 WezTerm；
 - `WT_SESSION` 表示 Windows Terminal。
+
+`default_graphics_choice` 在 SSH 或 WezTerm 中返回 `Text`；其他环境只有检测到 Windows Terminal 时返回 `GraphicsBeta`。因此原生 Windows Terminal 和 WSL 默认启用 Beta，而继承了 `WT_SESSION` 的 WezTerm、普通 Windows 终端、Linux 和 macOS 默认使用 Text。
 
 `GraphicsRuntime::detect` 每次启动只执行一次。SSH 会跳过可能向终端发送查询序列的 `Picker::from_query_stdio`，直接安全降级。`resolve_backend` 的判断优先级如下：
 
@@ -117,6 +120,16 @@ ui.rs
 
 这些规则有意比“探测到任何可显示内容就启用”更严格，因为 Halfblocks 的清理和覆盖行为与真正的图像协议不同。
 
+### WezTerm 的位置与光标契约
+
+只有本地、非 tmux 的 WezTerm iTerm2 数据会由应用增加定位。编码完成后，graphics 先核对协议变体、尺寸、上游透明区域清理前缀和 iTerm2 图片引导序列；全部符合预期才执行以下包装：
+
+1. 在上游清屏序列之前写入最终图像矩形左上角的一基绝对 CSI 坐标。
+2. 原样保留 `ratatui-image` 的清屏序列、iTerm2 图片参数和 PNG/base64 数据。
+3. 数据结尾写入同一行的下一单元格绝对坐标，与 Ratatui 对承载字符串的首个单元格所做的光标记账一致。
+
+tmux 会话保留上游 passthrough，普通 iTerm2、Sixel 和 Kitty 也不经过此包装。若 WezTerm 数据结构无法安全核对，运行期立即降级为 `Text(Encoding)`，释放 Picker 和两个协议缓存，且不会输出未经锚定的图片或在后续帧重复尝试。
+
 ### 两级缓存
 
 `GraphicsRuntime` 使用两级缓存降低逐帧渲染成本：
@@ -124,19 +137,20 @@ ui.rs
 ```text
 HashMap<Card, DynamicImage>                一级：固定尺寸 RGBA 原图
         │
-        ├─ Selected: (Card, Size) -> Protocol  二级：选中牌槽位协议
-        └─ Discard:  (Card, Size) -> Protocol  二级：弃牌槽位协议
+        ├─ Selected: (Card, Rect) -> Protocol  二级：选中牌槽位协议
+        └─ Discard:  (Card, Rect) -> Protocol  二级：弃牌槽位协议
 ```
 
-一级缓存只以 `Card` 为键，因为原图不依赖终端区域。二级缓存的 `ProtocolKey` 同时包含 `Card` 和 Ratatui 单元格 `Size`：牌变化或窗口缩放都会触发重新编码。两个槽位不能共享二级缓存，因为它们可能具有不同尺寸和生命周期。
+一级缓存只以 `Card` 为键，因为原图不依赖终端区域。二级缓存的 `ProtocolKey` 同时包含 `Card` 和最终 Ratatui `Rect`：牌、原点或尺寸变化都会触发重新编码；完全不变的 50 ms 重绘则复用协议。原点必须属于键，因为 WezTerm 输出嵌入绝对坐标。两个槽位不能共享二级缓存，即使展示同一张牌也必须保留各自的位置与生命周期。
 
 `protocol` 的处理过程是：
 
-1. 若当前为文字后端或目标尺寸为零，返回 `None`。
+1. 若当前为文字后端或目标矩形为零，返回 `None`。
 2. 比较目标键与对应槽位缓存；完全一致时直接返回上一帧的协议。
-3. 缓存未命中时，从一级缓存取得或生成原图，再以 `Resize::Fit` 编码。
-4. 编码成功后原子地替换对应槽位缓存。
-5. 编码失败时，把整个运行期降级为 `Text(Encoding)`，丢弃 `Picker` 和两个协议缓存，防止每帧重复失败。
+3. 缓存未命中时，从一级缓存取得或生成原图，再按最终矩形的尺寸编码。
+4. 本地非 tmux WezTerm 在核对上游数据后加入最终矩形坐标；其他后端保持原数据。
+5. 编码与必要的位置包装都成功后，原子地替换对应槽位缓存。
+6. 任一步失败时，把整个运行期降级为 `Text(Encoding)`，丢弃 `Picker` 和两个协议缓存，防止每帧重复失败。
 
 `suspend` 只清空两个位置相关的协议缓存，保留较昂贵且与布局无关的原图。它用于窗口过小、切换到弹窗或退出等场景。
 
@@ -185,7 +199,7 @@ HashMap<Card, DynamicImage>                一级：固定尺寸 RGBA 原图
 
 ### 增加终端协议或兼容规则
 
-协议选择集中在 `resolve_backend` 和 `from_picker`。增加规则时应同时考虑：环境优先级、探测失败行为、设置页本地化说明，以及编码失败后的稳定降级。不要在 `ui.rs` 中根据环境变量选择协议。
+协议选择集中在 `resolve_backend` 和 `from_picker`，WezTerm 数据核对与坐标包装集中在 graphics 的协议创建路径。增加规则时应同时考虑：环境优先级、探测失败行为、tmux passthrough、Ratatui 光标记账、设置页本地化说明，以及编码失败后的稳定降级。不要在 `ui.rs` 中根据环境变量选择协议。
 
 ### 修改牌面
 
@@ -197,8 +211,12 @@ HashMap<Card, DynamicImage>                一级：固定尺寸 RGBA 原图
 
 - 小窗口、文字与图像布局不会越界；
 - 手牌换行、滚动和上下导航一致；
-- 后端选择遵守 SSH、WezTerm 和 Windows Terminal 优先级；
-- 相同槽位、牌面和尺寸能够复用协议，变化时会重新编码；
+- 默认选择遵守 SSH、WezTerm 和 Windows Terminal 优先级，且 WSL 中的 Windows Terminal 默认启用 Beta；
+- 后端选择继续遵守 SSH、WezTerm 和 Windows Terminal 的协议约束；
+- 两个预览的拟合与居中矩形始终位于各自面板内；
+- 相同槽位、牌面和矩形能够复用协议，牌面、原点或尺寸变化时会重新编码；
+- WezTerm 的绝对锚点、下一单元格恢复、槽位独立性和异常降级符合契约；
+- 普通 iTerm2、Sixel、Kitty、tmux 和文字路径不被 WezTerm 包装改变；
 - 每种牌面保持固定 RGBA 尺寸、四色映射正确，禁止牌的中心和角标存在。
 
 修改后至少运行：

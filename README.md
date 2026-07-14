@@ -41,6 +41,18 @@ uno-update
 
 The updater checks GitHub Releases and installs a newer version when one is available.
 
+## Uninstalling
+
+Installations created by the shell or PowerShell installer can be removed with:
+
+```console
+uno --uninstall
+```
+
+The command shows the managed files and requires `y` or `yes` before removing them. To skip the prompt, run `uno --uninstall -y` or `uno --uninstall --yes`.
+
+Only a matching cargo-dist installation is removed. Package-manager, Cargo, development, and manually copied builds are refused so they can be removed by the tool that installed them. Uninstalling removes `uno`, `uno-update`, and the install receipt; it preserves the shared Cargo bin directory and PATH configuration.
+
 ## Notice
 
 Release artifacts and installers are built with [cargo-dist](https://github.com/axodotdev/cargo-dist). The `uno-update` command is provided by [axoupdater](https://github.com/axodotdev/axoupdater).
@@ -55,4 +67,3 @@ This README.md is for quick start & acknowledgements, for docs, please go to [de
 ## Issue
 
 If you found any issue, feel free to report it in [issue](https://github.com/Mcas-996/uno_local/issues)
-

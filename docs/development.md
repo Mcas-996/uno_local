@@ -8,7 +8,7 @@
 - Rust 1.91 或更高版本（建议通过 [rustup](https://rustup.rs/) 安装）
 - 一个至少为 `70 × 22` 字符的终端窗口
 
-程序不依赖外部服务，也不需要配置数据库或环境变量。终端达到 `70 × 26` 字符且支持相应图像协议时，程序会自动显示图像牌面；否则会安全地回退到彩色文本牌面。
+程序不依赖外部服务，也不需要配置数据库或环境变量。Windows Terminal（包括 WSL）默认选择 `Graphics (Beta)`；WezTerm、其他 Windows 终端、Linux 和 macOS 默认使用彩色文本牌面。用户仍可在任一本地终端手动启用 Beta 图像，终端至少达到 `70 × 26` 字符且协议受支持时才会显示图像，否则安全回退到文字。
 
 ## 项目结构
 
@@ -17,6 +17,7 @@ uno_laptop_client/
 ├── .github/workflows/       # GitHub Actions 与 cargo-dist 发布流程
 ├── docs/                    # 开发说明、手工测试清单和演示资源
 ├── external/debug/          # cargo-dist/axoupdater 的调试辅助源码
+├── external/ratatui-image/  # 未启用的 ratatui-image v11.0.6 后备源码
 ├── openspec/                # 功能变更的 OpenSpec 设计、规格与任务记录
 ├── src/
 │   ├── main.rs              # 程序入口、事件循环及终端状态恢复
@@ -68,6 +69,8 @@ cargo run -- --version
 
 `--` 用于将后面的参数传递给 `uno` 程序，而不是 Cargo。`-v` 与 `--version` 等价，版本输出同时包含 Cargo 包版本和构建所对应的 12 位 Git 提交号。当前程序不接受其他位置参数，所有对局选项都在 TUI 设置页面中完成。
 
+通过 README 中的 shell 或 PowerShell 安装脚本安装后，可运行 `uno --uninstall` 查看待删除路径并输入 `y` 或 `yes` 确认；`uno --uninstall -y` 和 `uno --uninstall --yes` 可跳过提示。程序只有在 cargo-dist 收据与当前可执行文件匹配时才自动删除 `uno`、`uno-update` 和收据。源码构建、Cargo、包管理器或手动复制的版本会被拒绝，应使用原安装方式移除。卸载不会修改共享的 `CARGO_HOME/bin`、shell 配置或 Windows PATH 注册表项。
+
 ## 构建与运行二进制文件
 
 调试构建：
@@ -110,11 +113,25 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 涉及终端渲染、键盘交互或图像协议的修改，还应按照[手工测试清单](manual-test.md)在目标终端中验证。
 
+## `ratatui-image` 源码后备
+
+`external/ratatui-image/` 保存 `ratatui-image v11.0.6` 的完整上游源码快照。它对应发布标签 `v11.0.6` 和提交 `a813cde9d83139bc87f64fe167abeb690b74019a`；`Cargo.lock` 中的 crates.io 包校验和为 `e000b7a22eae639460bc6ec8bb1cc689ecae5b0ed21935cd7d7dd52d38270c86`。快照保留许可证、Cargo 文件、源码、上游测试/快照、示例、基准和文档，排除 `.git`、`target` 及 Cargo 解包标记。
+
+该目录默认不参与依赖解析，根目录 `Cargo.toml` 始终优先使用 crates.io 的 `ratatui-image = "11.0.6"`。初始快照应保持上游原样；只有应用层 WezTerm 定位方案无法通过验收，或未来上游接口无法再被安全验证和包装时，才允许在完成评审后修改副本并启用本地补丁：
+
+```toml
+[patch.crates-io]
+ratatui-image = { path = "external/ratatui-image" }
+```
+
+更新后备版本时，应从一个明确的上游标签重新建立完整快照，同时更新本节的标签、提交和 crates.io 校验和；不得复制 `.git`、`target` 或生成产物。无论是否启用补丁，都要运行完整 Rust 检查和手工终端矩阵。解除紧急补丁时删除 `[patch.crates-io]` 段即可恢复 crates.io 来源，不要删除或悄悄改写后备源码的来源记录。
+
 ## 运行注意事项
 
 - 终端小于 `70 × 22` 时，程序只显示调整窗口大小的提示。
 - 图像牌面要求终端至少为 `70 × 26`；不满足条件时仍可使用完整的文本界面。
-- 可在设置页面将 `Graphics` 切换为 `Text`，强制禁用图像输出。
+- 设置页提供 `Text` 和 `Graphics (Beta)`；只有 Windows Terminal（包括 WSL）默认选择 Beta，WezTerm 和其他终端默认选择 Text。
+- 任一本地终端都可手动选择 `Graphics (Beta)` 尝试已探测到的 iTerm2、Sixel 或 Kitty 协议；选择 `Text` 会完全禁用图像输出。
 - SSH 会话会自动使用文本牌面，避免图像协议转义序列干扰远程终端。
 - 按 `Ctrl+C`、正常退出或发生 panic 时，程序都会尝试恢复终端的原始模式、光标和备用屏幕状态。
 

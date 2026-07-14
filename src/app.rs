@@ -40,13 +40,13 @@ pub struct Setup {
 }
 
 impl Setup {
-    fn new(language: Language) -> Self {
+    fn new(language: Language, graphics: GraphicsChoice) -> Self {
         Self {
             name: language.default_player_name().to_owned(),
             bot_count: 3,
             difficulty: Difficulty::Normal,
             deck_variant: DeckVariant::Holiday,
-            graphics: GraphicsChoice::Auto,
+            graphics,
             selected: 0,
         }
     }
@@ -73,11 +73,17 @@ pub struct App {
 }
 
 impl App {
+    #[cfg(test)]
     pub fn new(language: Language) -> Self {
+        Self::with_graphics(language, GraphicsChoice::Text)
+    }
+
+    /// 使用终端环境推荐的初始图形选项创建应用状态。
+    pub fn with_graphics(language: Language, graphics: GraphicsChoice) -> Self {
         Self {
             language,
             screen: Screen::Setup,
-            setup: Setup::new(language),
+            setup: Setup::new(language, graphics),
             game: None,
             human_id: PlayerId::new("human"),
             ai_ids: Vec::new(),
@@ -254,7 +260,7 @@ impl App {
                 }
             }
             5 => {
-                // 此处只保存 Auto/Text 偏好，不在输入处理阶段探测或切换协议；
+                // 此处只保存 Text/Graphics Beta 偏好，不在输入处理阶段探测或切换协议；
                 // UI 每帧通过 GraphicsRuntime 解析实际后端。
                 let index = GraphicsChoice::ALL
                     .iter()
@@ -698,15 +704,18 @@ mod tests {
     }
 
     #[test]
-    fn setup_graphics_setting_switches_between_auto_and_text() {
+    fn setup_graphics_setting_switches_between_text_and_graphics_beta() {
         let mut app = App::new(Language::English);
-        assert_eq!(app.setup.graphics, GraphicsChoice::Auto);
+        assert_eq!(app.setup.graphics, GraphicsChoice::Text);
         app.setup.selected = 5;
 
         app.adjust_setup(1);
-        assert_eq!(app.setup.graphics, GraphicsChoice::Text);
+        assert_eq!(app.setup.graphics, GraphicsChoice::GraphicsBeta);
         app.adjust_setup(-1);
-        assert_eq!(app.setup.graphics, GraphicsChoice::Auto);
+        assert_eq!(app.setup.graphics, GraphicsChoice::Text);
+
+        let beta = App::with_graphics(Language::English, GraphicsChoice::GraphicsBeta);
+        assert_eq!(beta.setup.graphics, GraphicsChoice::GraphicsBeta);
     }
 
     #[test]

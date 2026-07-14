@@ -9,6 +9,7 @@ mod core;
 mod graphics;
 mod i18n;
 mod ui;
+mod uninstall;
 
 use std::env;
 use std::io::{self, stdout};
@@ -44,6 +45,12 @@ fn run(args: Vec<String>) -> Result<(), String> {
             print_version();
             Ok(())
         }
+        [argument] if argument == "--uninstall" => uninstall::run(false),
+        [argument, confirmation]
+            if argument == "--uninstall" && matches!(confirmation.as_str(), "-y" | "--yes") =>
+        {
+            uninstall::run(true)
+        }
         [argument] => Err(format!("unknown argument '{argument}'; run uno --help")),
         _ => Err("uno does not accept positional arguments; run uno --help".to_owned()),
     }
@@ -57,6 +64,7 @@ fn print_help() {
     println!("Options:");
     println!("  -h, --help       Print help");
     println!("  -v, --version    Print version");
+    println!("      --uninstall  Uninstall a managed UNO installation (-y, --yes to confirm)");
     println!();
     println!("The game runs fully offline. Configure 1-4 AI opponents in the TUI.");
 }
@@ -78,7 +86,7 @@ fn run_tui() -> io::Result<()> {
     // 图形能力只在启动时探测一次，编码后的预览由运行时跨帧复用。
     let mut graphics = GraphicsRuntime::detect();
     terminal.clear()?;
-    let mut app = App::new(Language::detect());
+    let mut app = App::with_graphics(Language::detect(), graphics.default_choice());
 
     while !app.should_exit {
         // UI 读取应用状态，并通过可变图形运行时按需创建或释放预览协议。

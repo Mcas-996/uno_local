@@ -137,37 +137,39 @@ impl Language {
 
     /// 生成人类可读的图形设置摘要。
     ///
-    /// `choice` 表示用户偏好，`backend` 表示环境探测后的实际结果；两者分开
-    /// 传入，使自动降级不会被错误描述为用户主动选择文字模式。
+    /// `choice` 表示用户偏好，`backend` 表示环境探测后的实际结果。
     pub fn graphics(self, choice: GraphicsChoice, backend: GraphicsBackend) -> String {
-        // 设置页同时展示用户选择与实际后端；自动模式降级时保留具体原因，
+        // 设置页同时展示用户选择与实际后端；Beta 模式降级时保留具体原因，
         // 便于用户判断是环境限制还是运行时编码错误。
         match (self, choice, backend) {
-            (Self::English, GraphicsChoice::Text, _) => "Text (manual)".to_owned(),
-            (Self::Chinese, GraphicsChoice::Text, _) => "文字（手动）".to_owned(),
-            (Self::English, GraphicsChoice::Auto, GraphicsBackend::Iterm2) => {
-                "Auto (iTerm2)".to_owned()
+            (Self::English, GraphicsChoice::Text, _) => "Text".to_owned(),
+            (Self::Chinese, GraphicsChoice::Text, _) => "文字".to_owned(),
+            (Self::English, GraphicsChoice::GraphicsBeta, GraphicsBackend::Iterm2) => {
+                "Graphics (Beta) (iTerm2)".to_owned()
             }
-            (Self::English, GraphicsChoice::Auto, GraphicsBackend::Sixel) => {
-                "Auto (Sixel)".to_owned()
+            (Self::English, GraphicsChoice::GraphicsBeta, GraphicsBackend::Sixel) => {
+                "Graphics (Beta) (Sixel)".to_owned()
             }
-            (Self::English, GraphicsChoice::Auto, GraphicsBackend::Kitty) => {
-                "Auto (Kitty)".to_owned()
+            (Self::English, GraphicsChoice::GraphicsBeta, GraphicsBackend::Kitty) => {
+                "Graphics (Beta) (Kitty)".to_owned()
             }
-            (Self::Chinese, GraphicsChoice::Auto, GraphicsBackend::Iterm2) => {
-                "自动（iTerm2）".to_owned()
+            (Self::Chinese, GraphicsChoice::GraphicsBeta, GraphicsBackend::Iterm2) => {
+                "图像（Beta）（iTerm2）".to_owned()
             }
-            (Self::Chinese, GraphicsChoice::Auto, GraphicsBackend::Sixel) => {
-                "自动（Sixel）".to_owned()
+            (Self::Chinese, GraphicsChoice::GraphicsBeta, GraphicsBackend::Sixel) => {
+                "图像（Beta）（Sixel）".to_owned()
             }
-            (Self::Chinese, GraphicsChoice::Auto, GraphicsBackend::Kitty) => {
-                "自动（Kitty）".to_owned()
+            (Self::Chinese, GraphicsChoice::GraphicsBeta, GraphicsBackend::Kitty) => {
+                "图像（Beta）（Kitty）".to_owned()
             }
-            (Self::English, GraphicsChoice::Auto, GraphicsBackend::Text(reason)) => {
-                format!("Auto (Text: {})", fallback_reason_english(reason))
+            (Self::English, GraphicsChoice::GraphicsBeta, GraphicsBackend::Text(reason)) => {
+                format!(
+                    "Graphics (Beta) (Text: {})",
+                    fallback_reason_english(reason)
+                )
             }
-            (Self::Chinese, GraphicsChoice::Auto, GraphicsBackend::Text(reason)) => {
-                format!("自动（文字：{}）", fallback_reason_chinese(reason))
+            (Self::Chinese, GraphicsChoice::GraphicsBeta, GraphicsBackend::Text(reason)) => {
+                format!("图像（Beta）（文字：{}）", fallback_reason_chinese(reason))
             }
         }
     }
@@ -352,15 +354,36 @@ mod tests {
         assert_eq!(Language::English.difficulty(Difficulty::Extreme), "Extreme");
         assert_eq!(Language::Chinese.difficulty(Difficulty::Extreme), "最难");
         assert_eq!(
-            Language::English.graphics(GraphicsChoice::Auto, GraphicsBackend::Iterm2),
-            "Auto (iTerm2)"
+            Language::English.graphics(GraphicsChoice::GraphicsBeta, GraphicsBackend::Iterm2),
+            "Graphics (Beta) (iTerm2)"
         );
         assert_eq!(
             Language::Chinese.graphics(
-                GraphicsChoice::Auto,
+                GraphicsChoice::GraphicsBeta,
                 GraphicsBackend::Text(FallbackReason::Ssh)
             ),
-            "自动（文字：SSH）"
+            "图像（Beta）（文字：SSH）"
+        );
+        assert_eq!(
+            Language::English.graphics(
+                GraphicsChoice::GraphicsBeta,
+                GraphicsBackend::Text(FallbackReason::Unsupported)
+            ),
+            "Graphics (Beta) (Text: unsupported)"
+        );
+        assert_eq!(
+            Language::English.graphics(
+                GraphicsChoice::Text,
+                GraphicsBackend::Text(FallbackReason::Manual)
+            ),
+            "Text"
+        );
+        assert_eq!(
+            Language::Chinese.graphics(
+                GraphicsChoice::Text,
+                GraphicsBackend::Text(FallbackReason::Manual)
+            ),
+            "文字"
         );
     }
 

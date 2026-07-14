@@ -9,6 +9,17 @@ Automated tests validate backend resolution, generated pixels, caching, responsi
 3. Confirm Easy, Normal, and Hard can each start a match.
 4. Run `uno --help` and confirm it exits without entering raw terminal mode.
 5. From a directory without Cargo or Git files, run `uno -v` and `uno --version`; confirm both print the same package version and 12-character Git commit, then exit without entering raw terminal mode.
+6. Run `uno --help` and confirm it documents `--uninstall`, `-y`, and `--yes`.
+
+## Managed uninstall
+
+1. Install a release with the cargo-dist shell or PowerShell installer into a path containing spaces; on Windows also exercise a path containing `&`.
+2. Run `uno --uninstall`, confirm it lists `uno`, `uno-update`, and `uno-receipt.json`, then enter `n`, an empty line, and end-of-input in separate installations. Confirm each cancels successfully and preserves every file.
+3. Run `uno --uninstall` again and enter mixed-case `y` or `yes`; on Linux and macOS confirm the files are gone when the command returns, and on Windows confirm the scheduled cleanup removes them shortly after the process exits.
+4. Reinstall and repeat with `uno --uninstall -y` and `uno --uninstall --yes`; confirm neither invocation prompts.
+5. Run a development build while a separate release receipt exists. Confirm uninstall is refused and neither copy is removed.
+6. Confirm unrelated files in `CARGO_HOME/bin`, the directory itself, shell startup files, and the Windows user PATH remain unchanged.
+7. On Windows, keep another UNO process open during uninstall. Confirm cleanup retries and retains the receipt if the executable stays locked; close all UNO processes and retry.
 
 ## Gameplay
 
@@ -27,14 +38,17 @@ Automated tests validate backend resolution, generated pixels, caching, responsi
 
 ## Card graphics
 
-1. Start locally in Windows WezTerm at 70 × 26 or larger; confirm Setup reports `Auto (iTerm2)` and the selected hand card plus discard top render as images.
-2. Repeat in Windows Terminal 1.22 or newer from native PowerShell and local WSL; confirm Setup reports `Auto (Sixel)` and both previews render without scrolling the screen.
-3. Resize each supported terminal between 70 × 25 and 70 × 26; confirm the UI switches cleanly between colored text cards and image previews without residue.
-4. Open and close Help, quit confirmation, the wild-color picker, and the result screen; confirm images never cover an overlay and return correctly afterward.
-5. Start a new match and exit normally, with Ctrl+C, and through a forced panic in a debug build; confirm no image remains after the shell prompt returns.
-6. Connect through OpenSSH, a WezTerm SSH domain, and SSH inside WSL; confirm Setup reports `Auto (Text: SSH)`, no capability-query garbage appears, and cards remain colored text.
-7. Set only `SSH_AUTH_SOCK` in a local shell; confirm it does not force the SSH fallback.
-8. Select `Graphics: Text`; confirm Setup reports `Text (manual)` and no image is rendered at any terminal size.
+1. Start locally in Windows WezTerm at exactly 70 × 26; confirm Setup defaults to `Text` and emits no card images even though WezTerm supports iTerm2.
+2. Select `Graphics (Beta)` and confirm Setup reports `Graphics (Beta) (iTerm2)` and both the selected hand card and discard top are wholly inside their own panels. Repeat in a normal-sized window and at 159 × 41 with 192 DPI scaling; confirm both images are centered and opposite gaps differ by at most one terminal cell.
+3. Select several cards, play a card, draw a card, and start a new match. Confirm the selected and discard images stay in their respective panels and do not drift when their card contents change.
+4. Resize WezTerm repeatedly, including transitions across 70 × 25 and 70 × 26. Confirm text/image mode changes cleanly, centered positions recompute, and old images leave no residue.
+5. Open and close Help, quit confirmation, the wild-color picker, and the result screen in WezTerm; confirm images never cover an overlay and return at the correct positions afterward.
+6. Exit WezTerm normally, with Ctrl+C, and through a forced panic in a debug build; confirm no image remains after the shell prompt returns.
+7. Repeat in Windows Terminal 1.22 or newer from native PowerShell and local WSL; confirm Setup defaults to `Graphics (Beta) (Sixel)`, both previews render without scrolling, and WSL follows Windows Terminal rather than the Linux default.
+8. Connect through OpenSSH, a WezTerm SSH domain, and SSH inside WSL; confirm Setup defaults to `Text`, no capability-query garbage appears, and cards remain colored text. Select Graphics Beta and confirm it reports the SSH text fallback without emitting image data.
+9. Set only `SSH_AUTH_SOCK` in a local shell; confirm it does not force the SSH fallback.
+10. In Linux, macOS, and a Windows console other than Windows Terminal, confirm Setup defaults to `Text`; manually select `Graphics (Beta)` and confirm a supported detected backend is used or an explicit text fallback is reported.
+11. Select `Graphics: Text`; confirm Setup reports `Text` and no image is rendered at any terminal size, including 70 × 26 and 159 × 41.
 
 ## Localization
 

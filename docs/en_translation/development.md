@@ -10,7 +10,7 @@ This article is intended for developers who want to run, debug, or participate i
 
 - A terminal window with at least `70 × 22` characters
 
-The program does not depend on external services and does not require database or environment variable configuration. When the terminal reaches `70 × 26` characters and supports the corresponding image protocol, the program will automatically display image cards; otherwise, it will safely fall back to colored text cards.
+The program does not depend on external services and does not require database or environment variable configuration. Windows Terminal, including WSL, defaults to `Graphics (Beta)`; WezTerm, other Windows terminals, Linux, and macOS default to colored text cards. Users can explicitly enable beta graphics in any local terminal; images appear only at `70 × 26` or larger with a supported protocol and otherwise safely fall back to text.
 
 ## Project Structure
 
@@ -92,6 +92,8 @@ cargo run -- --version
 
 The `--` separator passes the following argument to `uno` instead of Cargo. `-v` and `--version` are equivalent; the output contains both the Cargo package version and the 12-character Git commit for the build. The program does not accept other positional arguments; all game options are configured in the TUI settings page.
 
+After installing with the shell or PowerShell script from the README, run `uno --uninstall` to review the managed paths and enter `y` or `yes` to confirm. `uno --uninstall -y` and `uno --uninstall --yes` skip the prompt. UNO removes `uno`, `uno-update`, and the receipt only when the cargo-dist receipt matches the running executable. Source, Cargo, package-manager, and manually copied builds are refused and must be removed through their original installation method. Uninstalling does not modify the shared `CARGO_HOME/bin`, shell configuration, or Windows PATH registry entry.
+
 ## Building and Running Binaries
 
 Debug Build:
@@ -139,7 +141,9 @@ Modifications involving terminal rendering, keyboard interaction, or image proto
 
 - Graphical display requires a terminal of at least `70 × 26`; a full text interface will still work if this requirement is not met.
 
-- You can switch `Graphics` to `Text` in the settings page to force image output disabled.
+- Setup offers `Text` and `Graphics (Beta)`. Only Windows Terminal, including WSL, defaults to beta graphics; WezTerm and every other terminal default to Text.
+
+- Any local terminal can opt into `Graphics (Beta)` to try a detected iTerm2, Sixel, or Kitty backend. Selecting `Text` disables image output.
 
 - SSH sessions will automatically use text display to avoid image protocol escape sequences interfering with the remote terminal.
 
