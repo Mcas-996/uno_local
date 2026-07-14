@@ -5,9 +5,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use rand::rngs::StdRng;
+use rand::rngs::{OsRng, StdRng};
 use rand::seq::SliceRandom;
-use rand::{Rng, SeedableRng};
+use rand::{Rng, RngCore, SeedableRng};
 
 pub const MIN_PLAYERS: usize = 2;
 pub const MAX_PLAYERS: usize = 5;
@@ -27,6 +27,13 @@ pub enum PlayerDrawRule {
 struct PlayerDrawState {
     rule: PlayerDrawRule,
     received: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RefillSeedSource {
+    Runtime,
+    #[cfg(test)]
+    Deterministic,
 }
 
 // ===== * DECK VARIANTS * =====
@@ -252,6 +259,7 @@ pub struct Game {
     events: Vec<GameEvent>,
     winner: Option<PlayerId>,
     rng: StdRng,
+    refill_seed_source: RefillSeedSource,
     player_draw_states: BTreeMap<PlayerId, PlayerDrawState>,
 }
 
@@ -292,6 +300,7 @@ impl Game {
             deck_variant,
             BTreeMap::new(),
             StdRng::from_entropy(),
+            RefillSeedSource::Runtime,
         )
     }
 
@@ -305,6 +314,7 @@ impl Game {
             deck_variant,
             player_draw_rules,
             StdRng::from_entropy(),
+            RefillSeedSource::Runtime,
         )
     }
 
@@ -319,6 +329,7 @@ impl Game {
             deck_variant,
             BTreeMap::new(),
             StdRng::seed_from_u64(seed),
+            RefillSeedSource::Deterministic,
         )
     }
 
@@ -334,6 +345,7 @@ impl Game {
             deck_variant,
             player_draw_rules,
             StdRng::seed_from_u64(seed),
+            RefillSeedSource::Deterministic,
         )
     }
 
@@ -342,6 +354,7 @@ impl Game {
         deck_variant: DeckVariant,
         player_draw_rules: BTreeMap<PlayerId, PlayerDrawRule>,
         mut rng: StdRng,
+        refill_seed_source: RefillSeedSource,
     ) -> Result<Self, GameError> {
         if !(MIN_PLAYERS..=MAX_PLAYERS).contains(&players.len()) {
             return Err(GameError::InvalidPlayerCount(players.len()));
@@ -395,6 +408,7 @@ impl Game {
             events: Vec::new(),
             winner: None,
             rng,
+            refill_seed_source,
             player_draw_states,
         };
         game.push_event(EventKind::GameStarted);
@@ -663,15 +677,7 @@ impl Game {
     }
 
     fn draw_card(&mut self) -> Result<Card, GameError> {
-        if self.draw_pile.is_empty() {
-            if self.discard_pile.len() <= 1 {
-                return Err(GameError::EmptyDrawPile);
-            }
-            let top = self.discard_pile.pop().expect("discard has a top");
-            self.draw_pile.append(&mut self.discard_pile);
-            self.draw_pile.shuffle(&mut self.rng);
-            self.discard_pile.push(top);
-        }
+        self.refill_draw_pile_if_empty();
         self.draw_pile.pop().ok_or(GameError::EmptyDrawPile)
     }
 
@@ -682,12 +688,7 @@ impl Game {
         if self.deck_variant != DeckVariant::Holiday {
             return self.draw_card();
         }
-        if self.draw_pile.is_empty() && self.discard_pile.len() > 1 {
-            let top = self.discard_pile.pop().expect("discard has a top");
-            self.draw_pile.append(&mut self.discard_pile);
-            self.draw_pile.shuffle(&mut self.rng);
-            self.discard_pile.push(top);
-        }
+        self.refill_draw_pile_if_empty();
         let card = draw_card_with_rule(
             &mut self.draw_pile,
             state.rule,
@@ -702,12 +703,11 @@ impl Game {
     }
 
     fn can_draw_card_for(&self, player: &PlayerId) -> bool {
-        let recyclable = &self.discard_pile[..self.discard_pile.len().saturating_sub(1)];
         let Some(state) = self.player_draw_states.get(player) else {
-            return !self.draw_pile.is_empty() || !recyclable.is_empty();
+            return true;
         };
         if self.deck_variant != DeckVariant::Holiday {
-            return !self.draw_pile.is_empty() || !recyclable.is_empty();
+            return true;
         }
 
         if required_rank_for_rule(state.rule, state.received).is_some() {
@@ -716,10 +716,29 @@ impl Game {
 
         let allowed = |card: &Card| card_allowed_for_rule(state.rule, card);
         if self.draw_pile.is_empty() {
-            recyclable.iter().any(allowed)
+            true
         } else {
             self.draw_pile.iter().any(allowed)
         }
+    }
+
+    fn refill_draw_pile_if_empty(&mut self) {
+        if !self.draw_pile.is_empty() {
+            return;
+        }
+
+        let seed = match self.refill_seed_source {
+            RefillSeedSource::Runtime => runtime_refill_seed(),
+            #[cfg(test)]
+            RefillSeedSource::Deterministic => {
+                let mut seed = [0; 32];
+                self.rng.fill_bytes(&mut seed);
+                seed
+            }
+        };
+        let mut refill_rng = StdRng::from_seed(seed);
+        self.draw_pile = deck(self.deck_variant);
+        self.draw_pile.shuffle(&mut refill_rng);
     }
 
     fn advance_turn(&mut self, steps: usize) {
@@ -762,6 +781,12 @@ impl Game {
         self.events.push(event.clone());
         event
     }
+}
+
+fn runtime_refill_seed() -> [u8; 32] {
+    let mut seed = [0; 32];
+    OsRng.fill_bytes(&mut seed);
+    seed
 }
 
 fn draw_card_with_rule<R: Rng + ?Sized>(
@@ -1147,7 +1172,7 @@ mod tests {
     }
 
     #[test]
-    fn player_can_pass_when_no_cards_are_available_to_draw() {
+    fn empty_draw_pile_refills_instead_of_allowing_pass() {
         let mut game = game();
         let current = game.current_player().clone();
         game.draw_pile.clear();
@@ -1155,9 +1180,13 @@ mod tests {
 
         assert_eq!(
             game.legal_actions(&current).unwrap().last(),
-            Some(&Action::Pass)
+            Some(&Action::Draw)
         );
-        assert!(game.apply_action(&current, Action::Pass).is_ok());
+        assert_eq!(
+            game.apply_action(&current, Action::Pass).unwrap_err(),
+            GameError::CannotPassBeforeDrawing
+        );
+        assert!(game.apply_action(&current, Action::Draw).is_ok());
     }
 
     #[test]
@@ -1330,10 +1359,12 @@ mod tests {
         )
         .unwrap();
 
-        // The old discard top also becomes recyclable after the three draw-pile cards.
-        assert_eq!(game.hand_for(&target).unwrap().len(), before + 4);
-        assert!(game.draw_pile.is_empty());
-        assert_eq!(game.discard_pile, vec![wild]);
+        assert_eq!(game.hand_for(&target).unwrap().len(), before + 16);
+        assert_eq!(game.draw_pile.len(), standard_deck().len() - 13);
+        assert_eq!(
+            game.discard_pile,
+            vec![Card::new(Color::Red, Rank::Number(4)), wild]
+        );
         assert_eq!(game.current_player(), &current);
     }
 
@@ -1434,18 +1465,74 @@ mod tests {
     }
 
     #[test]
-    fn discard_is_recycled_when_draw_pile_is_empty() {
+    fn standard_draw_refills_a_complete_deck_and_preserves_discards() {
         let mut game = game();
         let top = Card::new(Color::Blue, Rank::Number(9));
         game.draw_pile.clear();
-        game.discard_pile = vec![
+        let discards = vec![
             Card::new(Color::Red, Rank::Number(1)),
             Card::new(Color::Green, Rank::Number(2)),
             top,
         ];
-        let drawn = game.draw_card().unwrap();
-        assert_ne!(drawn, top);
-        assert_eq!(game.discard_pile, vec![top]);
+        game.discard_pile.clone_from(&discards);
+
+        game.draw_card().unwrap();
+
+        assert_eq!(game.draw_pile.len(), standard_deck().len() - 1);
+        assert_eq!(game.discard_pile, discards);
+    }
+
+    #[test]
+    fn holiday_draw_refills_a_complete_deck_and_preserves_discards() {
+        let mut game = Game::new_seeded(players(2), DeckVariant::Holiday, 21).unwrap();
+        let discards = vec![
+            Card::new(Color::Yellow, Rank::Number(4)),
+            Card::wild(Rank::WildDrawSixteen),
+        ];
+        game.draw_pile.clear();
+        game.discard_pile.clone_from(&discards);
+
+        game.draw_card().unwrap();
+
+        assert_eq!(game.draw_pile.len(), holiday_deck().len() - 1);
+        assert_eq!(game.discard_pile, discards);
+    }
+
+    #[test]
+    fn seeded_refills_are_reproducible_across_multiple_decks() {
+        let mut first = Game::new_seeded(players(2), DeckVariant::Holiday, 22).unwrap();
+        let mut second = Game::new_seeded(players(2), DeckVariant::Holiday, 22).unwrap();
+
+        for _ in 0..2 {
+            first.draw_pile.clear();
+            second.draw_pile.clear();
+            let first_cards: Vec<Card> = (0..12).map(|_| first.draw_card().unwrap()).collect();
+            let second_cards: Vec<Card> = (0..12).map(|_| second.draw_card().unwrap()).collect();
+            assert_eq!(first_cards, second_cards);
+            assert_eq!(first.draw_pile.len(), holiday_deck().len() - 12);
+            assert_eq!(second.draw_pile.len(), holiday_deck().len() - 12);
+        }
+    }
+
+    #[test]
+    fn holiday_draw_rules_still_apply_after_a_refill() {
+        let bot = PlayerId::new("p1");
+        let mut game = Game::new_seeded_with_draw_rules(
+            players(2),
+            DeckVariant::Holiday,
+            BTreeMap::from([(bot.clone(), PlayerDrawRule::ExcludeDrawEightAndSixteen)]),
+            23,
+        )
+        .unwrap();
+        game.draw_pile.clear();
+
+        for _ in 0..30 {
+            let card = game.draw_card_for(&bot).unwrap();
+            assert!(!matches!(
+                card.rank,
+                Rank::DrawEight | Rank::WildDrawSixteen
+            ));
+        }
     }
 
     #[test]
