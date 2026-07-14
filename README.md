@@ -16,13 +16,13 @@ https://github.com/user-attachments/assets/37a3b0e1-1527-4067-b81b-d49c915f5e90
 ### macOS / Linux
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Mcas-996/uno_online/releases/download/v0.5.3/uno-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Mcas-996/uno_online/releases/latest/download/uno-installer.sh | sh
 ```
 
 ### Windows PowerShell
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/Mcas-996/uno_online/releases/download/v0.5.3/uno-installer.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/Mcas-996/uno_online/releases/latest/download/uno-installer.ps1 | iex"
 ```
 
 After installation, start the game with:
