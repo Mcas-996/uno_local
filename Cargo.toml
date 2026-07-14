@@ -3,12 +3,14 @@ name = "uno"
 edition = "2024"
 license = "AGPL-3.0-only"
 repository = "https://github.com/Mcas-996/uno_online"
-version = "0.5.3-rc-1"
+version = "0.5.4"
 
 [dependencies]
-crossterm = "0.28.1"
+crossterm = "0.29.0"
+image = { version = "0.25.6", default-features = false }
 rand = "0.8.5"
-ratatui = "0.29.0"
+ratatui = "0.30.1"
+ratatui-image = { version = "11.0.6", default-features = false, features = ["crossterm"] }
 sys-locale = "0.3.2"
 
 [lints.rust]

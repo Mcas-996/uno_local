@@ -8,20 +8,24 @@ use ratatui::layout::{Alignment, Constraint, Direction as LayoutDirection, Layou
 use ratatui::style::{Color as TuiColor, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap};
+use ratatui_image::Image;
 
 use crate::app::{App, Screen};
+use crate::graphics::{GraphicsRuntime, PreviewSlot};
 use crate::i18n::Message;
 
 pub const MIN_WIDTH: u16 = 70;
 pub const MIN_HEIGHT: u16 = 22;
+pub const IMAGE_MIN_HEIGHT: u16 = 26;
 
 const MIN_HAND_HEIGHT: u16 = 5;
 const MIN_LOG_HEIGHT: u16 = 3;
 const FIXED_GAME_HEIGHT: u16 = 14;
 
-pub fn render(frame: &mut Frame<'_>, app: &App) {
+pub fn render(frame: &mut Frame<'_>, app: &App, graphics: &mut GraphicsRuntime) {
     let area = frame.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+        graphics.suspend();
         frame.render_widget(
             Paragraph::new(app.language.text(Message::TooSmall))
                 .alignment(Alignment::Center)
@@ -32,10 +36,21 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
         return;
     }
 
+    let images_visible = should_render_images(
+        area,
+        app.game.is_some(),
+        app.screen,
+        app.pending_wild.is_some(),
+        graphics.effective_backend(app.setup.graphics),
+    );
+    if !images_visible {
+        graphics.suspend();
+    }
+
     if app.game.is_some() {
-        render_game(frame, app, area);
+        render_game(frame, app, area, graphics, images_visible);
     } else {
-        render_setup(frame, app, area);
+        render_setup(frame, app, area, graphics);
     }
 
     match app.screen {
@@ -87,7 +102,22 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
     }
 }
 
-fn render_setup(frame: &mut Frame<'_>, app: &App, area: Rect) {
+fn should_render_images(
+    area: Rect,
+    has_game: bool,
+    screen: Screen,
+    has_pending_wild: bool,
+    backend: crate::graphics::GraphicsBackend,
+) -> bool {
+    has_game
+        && screen == Screen::Game
+        && !has_pending_wild
+        && area.width >= MIN_WIDTH
+        && area.height >= IMAGE_MIN_HEIGHT
+        && backend.supports_images()
+}
+
+fn render_setup(frame: &mut Frame<'_>, app: &App, area: Rect, graphics: &GraphicsRuntime) {
     let outer = centered(area, 62, 18);
     let rows = Layout::default()
         .direction(LayoutDirection::Vertical)
@@ -140,6 +170,14 @@ fn render_setup(frame: &mut Frame<'_>, app: &App, area: Rect) {
             app.language.text(Message::Language),
             app.language.name()
         ),
+        format!(
+            "{}: {}",
+            app.language.text(Message::Graphics),
+            app.language.graphics(
+                app.setup.graphics,
+                graphics.effective_backend(app.setup.graphics)
+            )
+        ),
         app.language.text(Message::Start).to_owned(),
     ];
     let items = values.into_iter().enumerate().map(|(index, value)| {
@@ -179,7 +217,13 @@ fn render_setup(frame: &mut Frame<'_>, app: &App, area: Rect) {
     );
 }
 
-fn render_game(frame: &mut Frame<'_>, app: &App, area: Rect) {
+fn render_game(
+    frame: &mut Frame<'_>,
+    app: &App,
+    area: Rect,
+    graphics: &mut GraphicsRuntime,
+    images_visible: bool,
+) {
     let game = app.game.as_ref().expect("game view has game");
     let state = game.public_state();
     let (hand_lines, selected_hand_row) = hand_lines(
@@ -188,13 +232,14 @@ fn render_game(frame: &mut Frame<'_>, app: &App, area: Rect) {
         app.selected_card,
         area.width.saturating_sub(2) as usize,
     );
-    let hand_height = hand_height(hand_lines.len(), area.height);
+    let table_height = if images_visible { 9 } else { 5 };
+    let hand_height = hand_height(hand_lines.len(), area.height, images_visible);
     let rows = Layout::default()
         .direction(LayoutDirection::Vertical)
         .constraints([
             Constraint::Length(3),
             Constraint::Length(3),
-            Constraint::Length(5),
+            Constraint::Length(table_height),
             Constraint::Length(hand_height),
             Constraint::Min(MIN_LOG_HEIGHT),
             Constraint::Length(3),
@@ -250,27 +295,11 @@ fn render_game(frame: &mut Frame<'_>, app: &App, area: Rect) {
         rows[1],
     );
 
-    let mut discard_line = vec![Span::raw("      [ ")];
-    discard_line.extend(styled_card(app.language, state.discard_top, false));
-    discard_line.push(Span::raw(" ]"));
-    let table = vec![
-        Line::from(vec![
-            Span::raw(format!("{}: ", app.language.text(Message::ActiveColor))),
-            Span::styled(
-                app.language.color(state.active_color),
-                Style::default()
-                    .fg(card_color(state.active_color))
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Line::from(discard_line),
-    ];
-    frame.render_widget(
-        Paragraph::new(table)
-            .alignment(Alignment::Center)
-            .block(carnival_block(app.language.text(Message::Table))),
-        rows[2],
-    );
+    if images_visible {
+        render_image_table(frame, app, &state, rows[2], graphics);
+    } else {
+        render_text_table(frame, app, &state, rows[2]);
+    }
 
     let visible_hand_rows = rows[3].height.saturating_sub(2) as usize;
     let hand_scroll = hand_scroll(selected_hand_row, visible_hand_rows);
@@ -423,15 +452,142 @@ pub(crate) fn adjacent_hand_card(
         .map_or(selected_card, |position| position.index)
 }
 
-fn hand_height(line_count: usize, area_height: u16) -> u16 {
+fn hand_height(line_count: usize, area_height: u16, images_visible: bool) -> u16 {
     let desired_height = u16::try_from(line_count)
         .unwrap_or(u16::MAX)
         .saturating_add(2)
         .max(MIN_HAND_HEIGHT);
+    let fixed_height = FIXED_GAME_HEIGHT + if images_visible { 4 } else { 0 };
     let max_height = area_height
-        .saturating_sub(FIXED_GAME_HEIGHT + MIN_LOG_HEIGHT)
+        .saturating_sub(fixed_height + MIN_LOG_HEIGHT)
         .max(MIN_HAND_HEIGHT);
     desired_height.min(max_height)
+}
+
+fn render_text_table(
+    frame: &mut Frame<'_>,
+    app: &App,
+    state: &crate::core::PublicGameState,
+    area: Rect,
+) {
+    let mut discard_line = vec![Span::raw("      [ ")];
+    discard_line.extend(styled_card(app.language, state.discard_top, false));
+    discard_line.push(Span::raw(" ]"));
+    let table = vec![
+        Line::from(vec![
+            Span::raw(format!("{}: ", app.language.text(Message::ActiveColor))),
+            Span::styled(
+                app.language.color(state.active_color),
+                Style::default()
+                    .fg(card_color(state.active_color))
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(discard_line),
+    ];
+    frame.render_widget(
+        Paragraph::new(table)
+            .alignment(Alignment::Center)
+            .block(carnival_block(app.language.text(Message::Table))),
+        area,
+    );
+}
+
+fn render_image_table(
+    frame: &mut Frame<'_>,
+    app: &App,
+    state: &crate::core::PublicGameState,
+    area: Rect,
+    graphics: &mut GraphicsRuntime,
+) {
+    let columns = Layout::default()
+        .direction(LayoutDirection::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+    let selected_card = app
+        .human_hand()
+        .and_then(|hand| hand.get(app.selected_card))
+        .copied();
+
+    let selected_title = selected_card.map_or_else(
+        || app.language.text(Message::SelectedCard).to_owned(),
+        |card| {
+            format!(
+                "{}: {}",
+                app.language.text(Message::SelectedCard),
+                app.language.card(card)
+            )
+        },
+    );
+    let selected_block = carnival_block(&selected_title);
+    let selected_inner = selected_block.inner(columns[0]);
+    frame.render_widget(selected_block, columns[0]);
+    if let Some(card) = selected_card {
+        render_card_preview(
+            frame,
+            graphics,
+            PreviewSlot::Selected,
+            card,
+            selected_inner,
+            app,
+        );
+    } else {
+        graphics.clear_slot(PreviewSlot::Selected);
+        frame.render_widget(
+            Paragraph::new(app.language.text(Message::NoSelectedCard)).alignment(Alignment::Center),
+            selected_inner,
+        );
+    }
+
+    let discard_title = format!(
+        "{}: {} · {}: {}",
+        app.language.text(Message::DiscardTop),
+        app.language.card(state.discard_top),
+        app.language.text(Message::ActiveColor),
+        app.language.color(state.active_color)
+    );
+    let discard_block = carnival_block(&discard_title);
+    let discard_inner = discard_block.inner(columns[1]);
+    frame.render_widget(discard_block, columns[1]);
+    render_card_preview(
+        frame,
+        graphics,
+        PreviewSlot::Discard,
+        state.discard_top,
+        discard_inner,
+        app,
+    );
+}
+
+fn render_card_preview(
+    frame: &mut Frame<'_>,
+    graphics: &mut GraphicsRuntime,
+    slot: PreviewSlot,
+    card: crate::core::Card,
+    area: Rect,
+    app: &App,
+) {
+    let size = ratatui::layout::Size::new(area.width, area.height);
+    if let Some(protocol) = graphics.protocol(slot, card, size) {
+        let image_area = centered_image_area(area, protocol.size());
+        frame.render_widget(Image::new(protocol), image_area);
+    } else {
+        frame.render_widget(
+            Paragraph::new(app.language.card(card)).alignment(Alignment::Center),
+            area,
+        );
+    }
+}
+
+fn centered_image_area(area: Rect, image_size: ratatui::layout::Size) -> Rect {
+    let width = image_size.width.min(area.width);
+    let height = image_size.height.min(area.height);
+    Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    )
 }
 
 fn hand_scroll(selected_row: usize, visible_rows: usize) -> usize {
@@ -623,6 +779,13 @@ mod tests {
             .join("\n")
     }
 
+    fn draw_text(terminal: &mut Terminal<TestBackend>, app: &App) {
+        let mut graphics = GraphicsRuntime::text_for_tests();
+        terminal
+            .draw(|frame| render(frame, app, &mut graphics))
+            .unwrap();
+    }
+
     fn assert_rounded_corners(terminal: &Terminal<TestBackend>, area: Rect) {
         let buffer = terminal.backend().buffer();
         let right = area.x + area.width - 1;
@@ -639,7 +802,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let app = App::new(Language::English);
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        draw_text(&mut terminal, &app);
         assert_rounded_corners(&terminal, Rect::new(9, 3, 62, 18));
 
         let backend = TestBackend::new(100, 28);
@@ -647,11 +810,11 @@ mod tests {
         let mut app = App::new(Language::English);
         app.setup.bot_count = 1;
         app.start_match().unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        draw_text(&mut terminal, &app);
         assert_rounded_corners(&terminal, Rect::new(0, 0, 100, 3));
 
         app.screen = Screen::Help;
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        draw_text(&mut terminal, &app);
         assert_rounded_corners(&terminal, Rect::new(19, 3, 62, 21));
     }
 
@@ -660,7 +823,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let app = App::new(Language::Chinese);
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        draw_text(&mut terminal, &app);
         let screen = contents(&terminal);
         assert!(screen.contains('新'));
         assert!(screen.contains('电'));
@@ -675,9 +838,103 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let app = App::new(Language::English);
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        draw_text(&mut terminal, &app);
 
         assert!(contents(&terminal).contains("Language: English"));
+        assert!(contents(&terminal).contains("Graphics: Auto (Text: unsupported)"));
+    }
+
+    #[test]
+    fn image_mode_is_responsive_and_suspends_for_overlays_or_text() {
+        use crate::graphics::{FallbackReason, GraphicsBackend};
+
+        assert!(!should_render_images(
+            Rect::new(0, 0, 70, 25),
+            true,
+            Screen::Game,
+            false,
+            GraphicsBackend::Iterm2,
+        ));
+        assert!(should_render_images(
+            Rect::new(0, 0, 70, 26),
+            true,
+            Screen::Game,
+            false,
+            GraphicsBackend::Sixel,
+        ));
+        assert!(!should_render_images(
+            Rect::new(0, 0, 100, 30),
+            true,
+            Screen::Help,
+            false,
+            GraphicsBackend::Kitty,
+        ));
+        assert!(!should_render_images(
+            Rect::new(0, 0, 100, 30),
+            true,
+            Screen::Game,
+            false,
+            GraphicsBackend::Text(FallbackReason::Ssh),
+        ));
+    }
+
+    #[test]
+    fn fitted_images_are_centered_inside_their_panels() {
+        assert_eq!(
+            centered_image_area(Rect::new(10, 5, 20, 10), ratatui::layout::Size::new(6, 4)),
+            Rect::new(17, 8, 6, 4)
+        );
+        assert_eq!(
+            centered_image_area(Rect::new(10, 5, 20, 10), ratatui::layout::Size::new(30, 20)),
+            Rect::new(10, 5, 20, 10)
+        );
+    }
+
+    #[test]
+    fn image_previews_are_created_only_on_large_game_and_cleared_for_overlay() {
+        use ratatui_image::picker::ProtocolType;
+
+        let backend = TestBackend::new(100, 25);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new(Language::English);
+        app.setup.bot_count = 1;
+        app.start_match().unwrap();
+        let mut graphics = GraphicsRuntime::with_protocol_for_tests(ProtocolType::Iterm2);
+
+        terminal
+            .draw(|frame| render(frame, &app, &mut graphics))
+            .unwrap();
+        assert_eq!(graphics.cached_preview_count(), 0);
+        assert!(contents(&terminal).contains("Table"));
+
+        terminal.backend_mut().resize(100, 28);
+        terminal
+            .draw(|frame| render(frame, &app, &mut graphics))
+            .unwrap();
+        assert_eq!(graphics.cached_preview_count(), 2);
+        let screen = contents(&terminal);
+        assert!(screen.contains("Selected"));
+        assert!(screen.contains("Discard"));
+
+        terminal.backend_mut().resize(50, 10);
+        terminal
+            .draw(|frame| render(frame, &app, &mut graphics))
+            .unwrap();
+        assert_eq!(graphics.cached_preview_count(), 0);
+        assert!(contents(&terminal).contains("Terminal too small"));
+
+        terminal.backend_mut().resize(100, 28);
+        terminal
+            .draw(|frame| render(frame, &app, &mut graphics))
+            .unwrap();
+        assert_eq!(graphics.cached_preview_count(), 2);
+
+        app.screen = Screen::Help;
+        terminal
+            .draw(|frame| render(frame, &app, &mut graphics))
+            .unwrap();
+        assert_eq!(graphics.cached_preview_count(), 0);
+        assert!(contents(&terminal).contains("Help"));
     }
 
     #[test]
@@ -687,7 +944,7 @@ mod tests {
         let mut app = App::new(Language::English);
         app.setup.bot_count = 1;
         app.start_match().unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        draw_text(&mut terminal, &app);
         let screen = contents(&terminal);
         assert!(screen.contains("Your hand"));
         assert!(screen.contains("AI 1: 7 cards"));
@@ -760,9 +1017,10 @@ mod tests {
 
     #[test]
     fn hand_height_expands_without_hiding_the_event_log() {
-        assert_eq!(hand_height(1, MIN_HEIGHT), MIN_HAND_HEIGHT);
-        assert_eq!(hand_height(6, 28), 8);
-        assert_eq!(hand_height(20, 28), 11);
+        assert_eq!(hand_height(1, MIN_HEIGHT, false), MIN_HAND_HEIGHT);
+        assert_eq!(hand_height(6, 28, false), 8);
+        assert_eq!(hand_height(20, 28, false), 11);
+        assert_eq!(hand_height(20, 28, true), 7);
     }
 
     #[test]
@@ -773,7 +1031,7 @@ mod tests {
         app.setup.bot_count = 1;
         app.start_match().unwrap();
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        draw_text(&mut terminal, &app);
         let screen = contents(&terminal);
         assert!(screen.contains("D draw"));
         assert!(!screen.contains("P pass"));
@@ -783,7 +1041,7 @@ mod tests {
             .unwrap()
             .apply_action(&app.human_id, Action::Draw)
             .unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        draw_text(&mut terminal, &app);
         let screen = contents(&terminal);
         assert!(!screen.contains("D draw"));
         assert!(screen.contains("P pass"));
@@ -800,7 +1058,7 @@ mod tests {
         game.apply_action(&app.human_id, Action::Draw).unwrap();
         game.apply_action(&app.human_id, Action::Pass).unwrap();
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        draw_text(&mut terminal, &app);
         let screen = contents(&terminal);
         assert!(!screen.contains("Enter play"));
         assert!(!screen.contains("D draw"));
@@ -816,7 +1074,7 @@ mod tests {
         app.setup.bot_count = 1;
         app.start_match().unwrap();
 
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        draw_text(&mut terminal, &app);
         let screen = contents(&terminal);
         assert!(screen.contains('摸'));
         assert!(screen.contains('牌'));
@@ -829,7 +1087,7 @@ mod tests {
         let backend = TestBackend::new(50, 10);
         let mut terminal = Terminal::new(backend).unwrap();
         let app = App::new(Language::English);
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        draw_text(&mut terminal, &app);
         assert!(contents(&terminal).contains("Terminal too small"));
     }
 
@@ -868,7 +1126,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new(Language::English);
         app.setup.deck_variant = crate::core::DeckVariant::Standard;
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        draw_text(&mut terminal, &app);
         let screen = contents(&terminal);
         assert!(screen.contains("Standard 108"));
         assert!(screen.contains("STAR CARNIVAL"));
@@ -882,19 +1140,19 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = App::new(Language::English);
         app.screen = Screen::Help;
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        draw_text(&mut terminal, &app);
         let screen = contents(&terminal);
         assert!(screen.contains("STAR CARNIVAL"));
         assert!(screen.contains("WILD +16 changes color"));
 
         app.start_match().unwrap();
         app.pending_wild = Some(Card::wild(Rank::WildDrawSixteen));
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        draw_text(&mut terminal, &app);
         assert!(contents(&terminal).contains("Choose a color"));
 
         app.pending_wild = None;
         app.screen = Screen::Result;
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        draw_text(&mut terminal, &app);
         assert!(contents(&terminal).contains("[WIN]"));
     }
 }

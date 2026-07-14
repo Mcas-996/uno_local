@@ -13,6 +13,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
+use crate::graphics::GraphicsChoice;
 use crate::i18n::{Language, Message};
 
 const AI_DELAY: Duration = Duration::from_secs(1);
@@ -33,6 +34,7 @@ pub struct Setup {
     pub bot_count: usize,
     pub difficulty: Difficulty,
     pub deck_variant: DeckVariant,
+    pub graphics: GraphicsChoice,
     pub selected: usize,
 }
 
@@ -43,6 +45,7 @@ impl Setup {
             bot_count: 3,
             difficulty: Difficulty::Normal,
             deck_variant: DeckVariant::Holiday,
+            graphics: GraphicsChoice::Auto,
             selected: 0,
         }
     }
@@ -178,15 +181,15 @@ impl App {
     fn handle_setup_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Up => self.setup.selected = self.setup.selected.saturating_sub(1),
-            KeyCode::Down => self.setup.selected = (self.setup.selected + 1).min(5),
+            KeyCode::Down => self.setup.selected = (self.setup.selected + 1).min(6),
             KeyCode::Left => self.adjust_setup(-1),
             KeyCode::Right => self.adjust_setup(1),
-            KeyCode::Enter if self.setup.selected == 5 => {
+            KeyCode::Enter if self.setup.selected == 6 => {
                 if let Err(error) = self.start_match() {
                     self.status = error;
                 }
             }
-            KeyCode::Enter => self.setup.selected = (self.setup.selected + 1).min(5),
+            KeyCode::Enter => self.setup.selected = (self.setup.selected + 1).min(6),
             KeyCode::Backspace if self.setup.selected == 0 => {
                 self.setup.name.pop();
             }
@@ -241,6 +244,15 @@ impl App {
                 if self.setup.name == old_language.default_player_name() {
                     self.setup.name = self.language.default_player_name().to_owned();
                 }
+            }
+            5 => {
+                let index = GraphicsChoice::ALL
+                    .iter()
+                    .position(|candidate| *candidate == self.setup.graphics)
+                    .unwrap_or(0)
+                    .saturating_add_signed(delta)
+                    .clamp(0, GraphicsChoice::ALL.len() - 1);
+                self.setup.graphics = GraphicsChoice::ALL[index];
             }
             _ => {}
         }
@@ -655,6 +667,18 @@ mod tests {
         app.adjust_setup(-1);
         assert_eq!(app.language, Language::English);
         assert_eq!(app.setup.name, "Alex");
+    }
+
+    #[test]
+    fn setup_graphics_setting_switches_between_auto_and_text() {
+        let mut app = App::new(Language::English);
+        assert_eq!(app.setup.graphics, GraphicsChoice::Auto);
+        app.setup.selected = 5;
+
+        app.adjust_setup(1);
+        assert_eq!(app.setup.graphics, GraphicsChoice::Text);
+        app.adjust_setup(-1);
+        assert_eq!(app.setup.graphics, GraphicsChoice::Auto);
     }
 
     #[test]

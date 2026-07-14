@@ -4,6 +4,7 @@
 
 use crate::ai::Difficulty;
 use crate::core::{Card, Color, DeckVariant, Direction, GameError, Rank};
+use crate::graphics::{FallbackReason, GraphicsBackend, GraphicsChoice};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Language {
@@ -39,6 +40,7 @@ impl Language {
             Message::Difficulty => ("Difficulty", "难度"),
             Message::Deck => ("Deck", "牌组"),
             Message::Language => ("Language", "语言"),
+            Message::Graphics => ("Graphics", "图像"),
             Message::Start => ("Start match", "开始游戏"),
             Message::SetupHint => (
                 "↑/↓ field  ←/→ value  type name  Enter start  Esc quit",
@@ -46,6 +48,9 @@ impl Language {
             ),
             Message::Opponents => ("Opponents", "对手"),
             Message::Table => ("Table", "牌桌"),
+            Message::SelectedCard => ("Selected", "已选手牌"),
+            Message::DiscardTop => ("Discard", "弃牌"),
+            Message::NoSelectedCard => ("No selected card", "没有可选手牌"),
             Message::YourHand => ("Your hand", "你的手牌"),
             Message::EventLog => ("Events", "事件"),
             Message::Turn => ("Turn", "当前回合"),
@@ -124,6 +129,37 @@ impl Language {
             (Self::English, DeckVariant::Holiday) => "Holiday 118",
             (Self::Chinese, DeckVariant::Standard) => "标准 108",
             (Self::Chinese, DeckVariant::Holiday) => "节日 118",
+        }
+    }
+
+    pub fn graphics(self, choice: GraphicsChoice, backend: GraphicsBackend) -> String {
+        match (self, choice, backend) {
+            (Self::English, GraphicsChoice::Text, _) => "Text (manual)".to_owned(),
+            (Self::Chinese, GraphicsChoice::Text, _) => "文字（手动）".to_owned(),
+            (Self::English, GraphicsChoice::Auto, GraphicsBackend::Iterm2) => {
+                "Auto (iTerm2)".to_owned()
+            }
+            (Self::English, GraphicsChoice::Auto, GraphicsBackend::Sixel) => {
+                "Auto (Sixel)".to_owned()
+            }
+            (Self::English, GraphicsChoice::Auto, GraphicsBackend::Kitty) => {
+                "Auto (Kitty)".to_owned()
+            }
+            (Self::Chinese, GraphicsChoice::Auto, GraphicsBackend::Iterm2) => {
+                "自动（iTerm2）".to_owned()
+            }
+            (Self::Chinese, GraphicsChoice::Auto, GraphicsBackend::Sixel) => {
+                "自动（Sixel）".to_owned()
+            }
+            (Self::Chinese, GraphicsChoice::Auto, GraphicsBackend::Kitty) => {
+                "自动（Kitty）".to_owned()
+            }
+            (Self::English, GraphicsChoice::Auto, GraphicsBackend::Text(reason)) => {
+                format!("Auto (Text: {})", fallback_reason_english(reason))
+            }
+            (Self::Chinese, GraphicsChoice::Auto, GraphicsBackend::Text(reason)) => {
+                format!("自动（文字：{}）", fallback_reason_chinese(reason))
+            }
         }
     }
 
@@ -233,10 +269,14 @@ pub enum Message {
     Difficulty,
     Deck,
     Language,
+    Graphics,
     Start,
     SetupHint,
     Opponents,
     Table,
+    SelectedCard,
+    DiscardTop,
+    NoSelectedCard,
     YourHand,
     EventLog,
     Turn,
@@ -272,6 +312,24 @@ pub enum Message {
     CounterClockwise,
 }
 
+fn fallback_reason_english(reason: FallbackReason) -> &'static str {
+    match reason {
+        FallbackReason::Manual => "manual",
+        FallbackReason::Ssh => "SSH",
+        FallbackReason::Unsupported => "unsupported",
+        FallbackReason::Encoding => "error",
+    }
+}
+
+fn fallback_reason_chinese(reason: FallbackReason) -> &'static str {
+    match reason {
+        FallbackReason::Manual => "手动",
+        FallbackReason::Ssh => "SSH",
+        FallbackReason::Unsupported => "不支持",
+        FallbackReason::Encoding => "错误",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,5 +342,16 @@ mod tests {
         assert_eq!(Language::from_locale(None), Language::English);
         assert_eq!(Language::English.difficulty(Difficulty::Extreme), "Extreme");
         assert_eq!(Language::Chinese.difficulty(Difficulty::Extreme), "最难");
+        assert_eq!(
+            Language::English.graphics(GraphicsChoice::Auto, GraphicsBackend::Iterm2),
+            "Auto (iTerm2)"
+        );
+        assert_eq!(
+            Language::Chinese.graphics(
+                GraphicsChoice::Auto,
+                GraphicsBackend::Text(FallbackReason::Ssh)
+            ),
+            "自动（文字：SSH）"
+        );
     }
 }

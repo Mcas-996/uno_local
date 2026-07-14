@@ -4,7 +4,9 @@
 
 mod ai;
 mod app;
+mod card_art;
 mod core;
+mod graphics;
 mod i18n;
 mod ui;
 
@@ -17,8 +19,9 @@ use crossterm::cursor::Show;
 use crossterm::event::{self, Event};
 use crossterm::execute;
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
+use graphics::GraphicsRuntime;
 use i18n::Language;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -56,11 +59,12 @@ fn run_tui() -> io::Result<()> {
     let _guard = TerminalGuard::enter()?;
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
+    let mut graphics = GraphicsRuntime::detect();
     terminal.clear()?;
     let mut app = App::new(Language::detect());
 
     while !app.should_exit {
-        terminal.draw(|frame| ui::render(frame, &app))?;
+        terminal.draw(|frame| ui::render(frame, &app, &mut graphics))?;
         if event::poll(Duration::from_millis(50))?
             && let Event::Key(key) = event::read()?
         {
@@ -68,6 +72,8 @@ fn run_tui() -> io::Result<()> {
         }
         app.tick();
     }
+    graphics.suspend();
+    terminal.clear()?;
     terminal.show_cursor()?;
     Ok(())
 }
@@ -101,7 +107,7 @@ impl Drop for TerminalGuard {
 
 fn restore_terminal() {
     let _ = disable_raw_mode();
-    let _ = execute!(stdout(), LeaveAlternateScreen, Show);
+    let _ = execute!(stdout(), Clear(ClearType::All), LeaveAlternateScreen, Show);
 }
 
 #[cfg(test)]

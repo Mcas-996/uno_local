@@ -18,13 +18,13 @@ https://github.com/user-attachments/assets/d1b4b99b-929e-4755-9afa-341928041e72
 ### macOS / Linux
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Mcas-996/uno_online/releases/download/v0.5.3-rc-1/uno-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Mcas-996/uno_online/releases/download/v0.5.3/uno-installer.sh | sh
 ```
 
 ### Windows PowerShell
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/Mcas-996/uno_online/releases/download/v0.5.3-rc-1/uno-installer.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/Mcas-996/uno_online/releases/download/v0.5.3/uno-installer.ps1 | iex"
 ```
 
 After installation, start the game with:
@@ -32,6 +32,12 @@ After installation, start the game with:
 ```console
 uno
 ```
+
+## Terminal Card Graphics
+
+Card previews are enabled automatically on local terminals with a supported image protocol when the window is at least 70 × 26 cells. Windows WezTerm uses iTerm2 inline images, while Windows Terminal 1.22 or newer uses Sixel. Smaller windows, unsupported terminals, explicit Text mode, and every detected SSH session retain the fully playable colored text cards.
+
+The setup screen shows the resolved graphics backend. Choose `Graphics: Text` there to disable image output for the current run.
 
 ## Updating
 
