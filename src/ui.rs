@@ -567,9 +567,7 @@ fn render_card_preview(
     area: Rect,
     app: &App,
 ) {
-    let size = ratatui::layout::Size::new(area.width, area.height);
-    if let Some(protocol) = graphics.protocol(slot, card, size) {
-        let image_area = centered_image_area(area, protocol.size());
+    if let Some((protocol, image_area)) = graphics.protocol(slot, card, area) {
         frame.render_widget(Image::new(protocol), image_area);
     } else {
         frame.render_widget(
@@ -577,17 +575,6 @@ fn render_card_preview(
             area,
         );
     }
-}
-
-fn centered_image_area(area: Rect, image_size: ratatui::layout::Size) -> Rect {
-    let width = image_size.width.min(area.width);
-    let height = image_size.height.min(area.height);
-    Rect::new(
-        area.x + area.width.saturating_sub(width) / 2,
-        area.y + area.height.saturating_sub(height) / 2,
-        width,
-        height,
-    )
 }
 
 fn hand_scroll(selected_row: usize, visible_rows: usize) -> usize {
@@ -876,18 +863,6 @@ mod tests {
             false,
             GraphicsBackend::Text(FallbackReason::Ssh),
         ));
-    }
-
-    #[test]
-    fn fitted_images_are_centered_inside_their_panels() {
-        assert_eq!(
-            centered_image_area(Rect::new(10, 5, 20, 10), ratatui::layout::Size::new(6, 4)),
-            Rect::new(17, 8, 6, 4)
-        );
-        assert_eq!(
-            centered_image_area(Rect::new(10, 5, 20, 10), ratatui::layout::Size::new(30, 20)),
-            Rect::new(10, 5, 20, 10)
-        );
     }
 
     #[test]

@@ -145,6 +145,9 @@ impl Language {
             (Self::English, GraphicsChoice::Auto, GraphicsBackend::Kitty) => {
                 "Auto (Kitty)".to_owned()
             }
+            (Self::English, GraphicsChoice::Auto, GraphicsBackend::Halfblocks) => {
+                "Auto (Halfblocks)".to_owned()
+            }
             (Self::Chinese, GraphicsChoice::Auto, GraphicsBackend::Iterm2) => {
                 "自动（iTerm2）".to_owned()
             }
@@ -153,6 +156,9 @@ impl Language {
             }
             (Self::Chinese, GraphicsChoice::Auto, GraphicsBackend::Kitty) => {
                 "自动（Kitty）".to_owned()
+            }
+            (Self::Chinese, GraphicsChoice::Auto, GraphicsBackend::Halfblocks) => {
+                "自动（半块字符）".to_owned()
             }
             (Self::English, GraphicsChoice::Auto, GraphicsBackend::Text(reason)) => {
                 format!("Auto (Text: {})", fallback_reason_english(reason))

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::env;
 
-use ratatui::layout::Size;
+use ratatui::layout::{Rect, Size};
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::Protocol;
 use ratatui_image::{Resize, errors::Errors};
@@ -35,6 +35,7 @@ pub enum GraphicsBackend {
     Iterm2,
     Sixel,
     Kitty,
+    Halfblocks,
     Text(FallbackReason),
 }
 
@@ -74,8 +75,8 @@ pub fn resolve_backend(
     }
 
     if environment.is_wezterm {
-        return if detected == Some(ProtocolType::Iterm2) {
-            GraphicsBackend::Iterm2
+        return if detected == Some(ProtocolType::Halfblocks) {
+            GraphicsBackend::Halfblocks
         } else {
             GraphicsBackend::Text(FallbackReason::Unsupported)
         };
@@ -106,7 +107,7 @@ pub enum PreviewSlot {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ProtocolKey {
     card: Card,
-    size: Size,
+    area: Rect,
 }
 
 struct CachedProtocol {
@@ -117,6 +118,7 @@ struct CachedProtocol {
 pub struct GraphicsRuntime {
     picker: Option<Picker>,
     detected_backend: GraphicsBackend,
+    is_wezterm: bool,
     art: HashMap<Card, image::DynamicImage>,
     selected: Option<CachedProtocol>,
     discard: Option<CachedProtocol>,
@@ -138,14 +140,12 @@ impl GraphicsRuntime {
     }
 
     fn from_picker(environment: TerminalEnvironment, mut picker: Option<Picker>) -> Self {
-        // `ratatui-image` returns its Halfblocks default when WezTerm does not
-        // answer the font-size query, even though WezTerm's iTerm2 support can
-        // be established reliably from its environment. Keep the detected (or
-        // default) font size, but select the protocol WezTerm implements well.
+        // Halfblocks render directly into Ratatui cells, avoiding placement
+        // bugs in older WezTerm external-image protocol implementations.
         if environment.is_wezterm
             && let Some(picker) = picker.as_mut()
         {
-            picker.set_protocol_type(ProtocolType::Iterm2);
+            picker.set_protocol_type(ProtocolType::Halfblocks);
         }
         let detected = picker.as_ref().map(Picker::protocol_type);
         let detected_backend = resolve_backend(environment, detected);
@@ -156,6 +156,7 @@ impl GraphicsRuntime {
         Self {
             picker,
             detected_backend,
+            is_wezterm: environment.is_wezterm,
             art: HashMap::new(),
             selected: None,
             discard: None,
@@ -201,12 +202,17 @@ impl GraphicsRuntime {
         usize::from(self.selected.is_some()) + usize::from(self.discard.is_some())
     }
 
-    pub fn protocol(&mut self, slot: PreviewSlot, card: Card, size: Size) -> Option<&Protocol> {
-        if !self.detected_backend.supports_images() || size.width == 0 || size.height == 0 {
+    pub fn protocol(
+        &mut self,
+        slot: PreviewSlot,
+        card: Card,
+        area: Rect,
+    ) -> Option<(&Protocol, Rect)> {
+        if !self.detected_backend.supports_images() || area.width == 0 || area.height == 0 {
             return None;
         }
 
-        let key = ProtocolKey { card, size };
+        let key = ProtocolKey { card, area };
         let needs_encode = match slot {
             PreviewSlot::Selected => self
                 .selected
@@ -222,10 +228,12 @@ impl GraphicsRuntime {
             return None;
         }
 
-        match slot {
-            PreviewSlot::Selected => self.selected.as_ref().map(|cached| &cached.protocol),
-            PreviewSlot::Discard => self.discard.as_ref().map(|cached| &cached.protocol),
-        }
+        let cached = match slot {
+            PreviewSlot::Selected => self.selected.as_ref(),
+            PreviewSlot::Discard => self.discard.as_ref(),
+        }?;
+        let image_area = centered_image_area(cached.key.area, cached.protocol.size());
+        Some((&cached.protocol, image_area))
     }
 
     fn encode(&mut self, slot: PreviewSlot, key: ProtocolKey) -> Result<(), Errors> {
@@ -234,14 +242,15 @@ impl GraphicsRuntime {
             .entry(key.card)
             .or_insert_with(|| generate_card_art(key.card))
             .clone();
-        let protocol = self
+        let mut protocol = self
             .picker
             .as_ref()
             .expect("image backend retains picker")
-            // Use the preview panel even when the generated art's natural
-            // cell size is smaller on a high-DPI terminal. `Fit` only
-            // shrinks; `Scale` can also grow while preserving aspect ratio.
-            .new_protocol(image, key.size, Resize::Scale(None))?;
+            .new_protocol(image, key.area.as_size(), Resize::Fit(None))?;
+        if self.is_wezterm {
+            let image_area = centered_image_area(key.area, protocol.size());
+            position_wezterm_iterm2(&mut protocol, image_area);
+        }
         let cached = Some(CachedProtocol { key, protocol });
         match slot {
             PreviewSlot::Selected => self.selected = cached,
@@ -252,6 +261,34 @@ impl GraphicsRuntime {
             self.encodes += 1;
         }
         Ok(())
+    }
+}
+
+fn centered_image_area(area: Rect, image_size: Size) -> Rect {
+    let width = image_size.width.min(area.width);
+    let height = image_size.height.min(area.height);
+    Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    )
+}
+
+fn position_wezterm_iterm2(protocol: &mut Protocol, area: Rect) {
+    let Protocol::ITerm2(iterm2) = protocol else {
+        return;
+    };
+    if iterm2.is_tmux {
+        return;
+    }
+
+    // Make the OSC image independent of the backend's tracked cursor. The
+    // Ratatui buffer still owns clipping and diffing, while this final CUP
+    // forces WezTerm to start the image at the exact widget cell.
+    if let Some(image_command) = iterm2.data.find("\x1b]1337;") {
+        let absolute_position = format!("\x1b[{};{}H", area.y + 1, area.x + 1);
+        iterm2.data.insert_str(image_command, &absolute_position);
     }
 }
 
@@ -347,24 +384,25 @@ mod tests {
         let mut runtime = GraphicsRuntime::with_protocol_for_tests(ProtocolType::Iterm2);
         let card = Card::new(Color::Blue, Rank::Number(7));
         let size = Size::new(12, 7);
+        let area = Rect::new(2, 3, size.width, size.height);
 
         assert!(
             runtime
-                .protocol(PreviewSlot::Selected, card, size)
+                .protocol(PreviewSlot::Selected, card, area)
                 .is_some()
         );
         assert_eq!(runtime.encodes, 1);
         assert!(
             runtime
-                .protocol(PreviewSlot::Selected, card, size)
+                .protocol(PreviewSlot::Selected, card, area)
                 .is_some()
         );
         assert_eq!(runtime.encodes, 1);
-        assert!(runtime.protocol(PreviewSlot::Discard, card, size).is_some());
+        assert!(runtime.protocol(PreviewSlot::Discard, card, area).is_some());
         assert_eq!(runtime.encodes, 2);
         assert!(
             runtime
-                .protocol(PreviewSlot::Selected, card, Size::new(13, 7))
+                .protocol(PreviewSlot::Selected, card, Rect::new(2, 3, 13, 7))
                 .is_some()
         );
         assert_eq!(runtime.encodes, 3);
@@ -373,25 +411,51 @@ mod tests {
         assert_eq!(runtime.cached_preview_count(), 1);
         assert!(
             runtime
-                .protocol(PreviewSlot::Selected, card, Size::new(13, 7))
+                .protocol(PreviewSlot::Selected, card, Rect::new(2, 3, 13, 7))
                 .is_some()
         );
         assert_eq!(runtime.encodes, 4);
     }
 
     #[test]
-    fn preview_scales_up_to_use_available_panel_height() {
+    fn wezterm_iterm2_protocol_uses_absolute_image_position() {
         use crate::core::{Color, Rank};
 
-        let mut runtime = GraphicsRuntime::with_protocol_for_tests(ProtocolType::Iterm2);
+        let mut picker = Picker::halfblocks();
+        picker.set_protocol_type(ProtocolType::Iterm2);
+        let mut runtime = GraphicsRuntime::from_picker(
+            TerminalEnvironment {
+                is_wezterm: true,
+                ..TerminalEnvironment::default()
+            },
+            Some(picker),
+        );
         let card = Card::new(Color::Green, Rank::Number(2));
-        let available = Size::new(80, 20);
 
-        let protocol = runtime
-            .protocol(PreviewSlot::Selected, card, available)
+        let (protocol, image_area) = runtime
+            .protocol(PreviewSlot::Selected, card, Rect::new(10, 5, 20, 10))
             .expect("iTerm2 protocol");
+        let Protocol::ITerm2(iterm2) = protocol else {
+            panic!("expected iTerm2 protocol");
+        };
 
-        assert_eq!(protocol.size().height, available.height);
-        assert!(protocol.size().width < available.width);
+        assert!(iterm2.data.contains("\x1b[1B"));
+        assert!(iterm2.data.contains(&format!(
+            "\x1b[{};{}H\x1b]1337;",
+            image_area.y + 1,
+            image_area.x + 1
+        )));
+    }
+
+    #[test]
+    fn fitted_images_are_centered_inside_their_panels() {
+        assert_eq!(
+            centered_image_area(Rect::new(10, 5, 20, 10), Size::new(6, 4)),
+            Rect::new(17, 8, 6, 4)
+        );
+        assert_eq!(
+            centered_image_area(Rect::new(10, 5, 20, 10), Size::new(30, 20)),
+            Rect::new(10, 5, 20, 10)
+        );
     }
 }
