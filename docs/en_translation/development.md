@@ -1,152 +1,69 @@
 # Project Structure and Operation
 
-This article is intended for developers who want to run, debug, or participate in the development of UNO Star Carnival from source code. The game is a completely offline Rust terminal application, using Ratatui for the interface and Crossterm for cross-platform terminal input and output.
+UNO Star Carnival is a fully offline Rust terminal application. A single `uno` binary selects one of two frontends at runtime: a universal Crossterm frontend and a WezTerm-specific Termwiz frontend. Both share application state, rules, input semantics, and the layout model.
 
-## Environment Requirements
+## Requirements and frontend selection
 
 - Windows, macOS, or Linux
+- Rust 1.91 or later
+- A terminal of at least `70 × 26` cells
 
-- Rust 1.91 or later (recommended to install via [rustup](https://rustup.rs/))
+Frontend precedence is deterministic:
 
-- A terminal window with at least `70 × 22` characters
+1. SSH and tmux sessions force the universal text mode.
+2. Local WezTerm sessions use Termwiz and default to graphics; Text remains selectable in setup.
+3. Other local terminals use the universal frontend. It defaults to graphics only after confirming Sixel support and valid cell-pixel dimensions; otherwise it uses Text.
 
-The program does not depend on external services and does not require database or environment variable configuration. Windows Terminal, including WSL, defaults to `Graphics (Beta)`; WezTerm, other Windows terminals, Linux, and macOS default to colored text cards. Users can explicitly enable beta graphics in any local terminal; images appear only at `70 × 26` or larger with a supported protocol and otherwise safely fall back to text.
-
-## Project Structure
-
-```text uno_laptop_client/
-
-├── .github/workflows/ # GitHub Actions and cargo-dist release workflow
-
-├── docs/ # Development notes, manual test checklists, and demo resources
-
-├── external/debug/ # Debugging aids for cargo-dist/axoupdater
-
-├── openspec/ # OpenSpec design, specifications, and task logs for feature changes
-
-├── src/
-
-│ ├── main.rs # Program entry point, event loop, and terminal state recovery
-
-│ ├── app.rs # Page state, input processing, and local game flow
-
-│ ├── core.rs # Cards, decks, rules, turn states, and game events
-
-│ ├── ai.rs # Local AI decision-making at different difficulty levels
-
-│ ├── ui.rs # Ratatui layout, components, and overlay rendering
-
-│ ├── graphics.rs # Terminal image protocol detection, degradation, and preview caching
-
-│ ├── card_art.rs # Generate language-independent UNO card bitmaps from code
-
-│ └── i18n.rs # English and Simplified Chinese interface text
-
-├── Cargo.toml # Rust package information, dependencies, and build configuration
-
-├── Cargo.lock # Locked dependency versions
-
-├── dist-workspace.toml # Cargo-dist installation package and release target configuration
-
-└── README.md # Project introduction and installation instructions for released versions
-
-```
-
-The main call relationships are as follows:
+## Source layout
 
 ```text
-main (terminal initialization and event loop)
-
-├── app (application state and input) ──> core (rules)
-
-│ └──> ai (computer player)
-
-└── ui (interface rendering) ────────> graphics ──> card_art
-
-└──> i18n
-
+src/
+├── main.rs          # entry point, frontend dispatch, panic restoration
+├── environment.rs   # SSH, tmux, and WezTerm classification
+├── frontend.rs      # frontend-neutral input, viewport, and display types
+├── app.rs           # application state and local game flow
+├── view.rs          # shared semantic view and navigation
+├── screen.rs        # custom cell buffer, layout, and image slots
+├── universal.rs     # Crossterm text rendering and direct Sixel output
+├── termwez.rs       # Termwiz Surface, input, and WezTerm images
+├── core.rs / ai.rs  # game rules and AI
+├── card_art.rs      # language-independent card bitmaps
+└── i18n.rs          # English and Simplified Chinese strings
 ```
 
-## Running from Source Code
+The project no longer depends on Ratatui or `ratatui-image` and contains no application-owned Kitty/iTerm2 escape-sequence renderer. The universal frontend encodes Sixel directly with `icy_sixel`. The WezTerm frontend supplies PNG `EncodedFile` data to Termwiz `Change::Image`.
 
-Execute in the repository root directory:
+## Run and build
 
 ```console
 cargo run
-```
-
-On the first run, Cargo will download and compile dependencies. After compilation, it will directly enter the settings page, where you can choose player name, number of AIs, difficulty, deck, language, and graphics mode.
-
-To run with an optimized release configuration:
-
-```console
 cargo run --release
-```
-
-To view command-line help or the current build information without entering the terminal interface:
-
-```console
 cargo run -- --help
 cargo run -- --version
 ```
 
-The `--` separator passes the following argument to `uno` instead of Cargo. `-v` and `--version` are equivalent; the output contains both the Cargo package version and the 12-character Git commit for the build. The program does not accept other positional arguments; all game options are configured in the TUI settings page.
+`-v` is equivalent to `--version`. Game options are configured in the setup screen.
 
-After installing with the shell or PowerShell script from the README, run `uno --uninstall` to review the managed paths and enter `y` or `yes` to confirm. `uno --uninstall -y` and `uno --uninstall --yes` skip the prompt. UNO removes `uno`, `uno-update`, and the receipt only when the cargo-dist receipt matches the running executable. Source, Cargo, package-manager, and manually copied builds are refused and must be removed through their original installation method. Uninstalling does not modify the shared `CARGO_HOME/bin`, shell configuration, or Windows PATH registry entry.
+Debug binaries are written to `target\debug\uno.exe` on Windows or `target/debug/uno` on macOS/Linux. Release binaries are written to `target/release/`.
 
-## Building and Running Binaries
+An installer-managed copy can be removed with `uno --uninstall` or without prompting with `uno --uninstall -y`. UNO only removes files when the cargo-dist receipt matches the running executable.
 
-Debug Build:
-
-```console
-cargo build
-```
-The generated program is located in:
-
-- Windows: `target\debug\uno.exe`
-
-- macOS / Linux: `target/debug/uno`
-
-Release Build:
-
-```console
-cargo build --release
-```
-The corresponding program is located in the `target/release/` directory.
-
-After building, you can query its version from any directory, for example:
-
-```console
-target/release/uno --version
-```
-
-The version and commit are embedded in the executable at compile time. A release installed with the script in the README can likewise run `uno --version` without reading `Cargo.toml`, `Cargo.lock`, or `.git` at runtime.
-
-## Development Checks
-
-It is recommended to execute the following before submitting changes:
+## Development checks
 
 ```console
 cargo fmt --check
-cargo check
-cargo test
-cargo clippy --all-targets --all-features -- -D warnings
+cargo check --all-targets
+cargo test --all-targets
+cargo clippy --all-targets -- -D warnings
 ```
 
-Modifications involving terminal rendering, keyboard interaction, or image protocols should also be verified in the target terminal according to the [manual test checklist](manual-test.md).
+Rendering, input, and image changes must also follow the [manual terminal matrix](../manual-test.md).
 
-## Running Notes
+## Rendering and fallback behavior
 
-- When the terminal is smaller than `70 × 22`, the program will only display a prompt to resize the window.
-
-- Graphical display requires a terminal of at least `70 × 26`; a full text interface will still work if this requirement is not met.
-
-- Setup offers `Text` and `Graphics (Beta)`. Only Windows Terminal, including WSL, defaults to beta graphics; WezTerm and every other terminal default to Text.
-
-- Any local terminal can opt into `Graphics (Beta)` to try a detected Kitty or Sixel backend. iTerm2 is deprecated and safely falls back to text; selecting `Text` disables image output.
-
-- SSH sessions will automatically use text display to avoid image protocol escape sequences interfering with the remote terminal.
-
-- Pressing `Ctrl+C`, exiting normally, or experiencing a panic will attempt to restore the terminal's original mode, cursor, and alternate screen state.
-
-If you only want to install and run the released version, please use the installation command in [README](../README.md#quick-start).
+- The universal frontend sends Primary DA, `CSI 16 t`, and DSR once at startup and parses the bounded response. Graphics require both a Sixel declaration and valid cell-pixel dimensions.
+- Sixel output is cached by card, target cell size, and cell-pixel size. Moving, resizing, overlays, and mode changes clear obsolete image regions.
+- The Termwiz frontend caches PNG data and renders images through Surface cells. PNG generation failure keeps Termwiz running in Text mode.
+- A Termwiz initialization or terminal I/O failure preserves the current `App` and falls back to universal Text.
+- Help, color picker, result, and quit overlays suppress images. Below `70 × 26`, only the resize message is rendered.
+- Normal exit, `Ctrl+C`, and panic attempt to restore cooked mode, the cursor, and the primary screen.

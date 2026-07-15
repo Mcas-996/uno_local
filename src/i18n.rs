@@ -4,7 +4,7 @@
 
 use crate::ai::Difficulty;
 use crate::core::{Card, Color, DeckVariant, Direction, GameError, Rank};
-use crate::graphics::{FallbackReason, GraphicsBackend, GraphicsChoice};
+use crate::frontend::{FallbackReason, GraphicsBackend, GraphicsChoice};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Language {
@@ -46,25 +46,16 @@ impl Language {
                 "Arrows/hjkl navigate · type name · Enter start · Esc quit",
                 "方向键/hjkl 导航 · 输入名称 · Enter 开始 · Esc 退出",
             ),
-            Message::Opponents => ("Opponents", "对手"),
             Message::Table => ("Table", "牌桌"),
             Message::SelectedCard => ("Selected", "已选手牌"),
             Message::DiscardTop => ("Discard", "弃牌"),
-            Message::NoSelectedCard => ("No selected card", "没有可选手牌"),
             Message::YourHand => ("Your hand", "你的手牌"),
             Message::EventLog => ("Events", "事件"),
             Message::Turn => ("Turn", "当前回合"),
             Message::ActiveColor => ("Active color", "当前颜色"),
             Message::Direction => ("Direction", "方向"),
             Message::Cards => ("cards", "张牌"),
-            Message::PlayHint => (
-                "Arrows/hjkl select · Enter play",
-                "方向键/hjkl 选牌 · Enter 出牌",
-            ),
-            Message::DrawHint => ("D draw", "D 摸牌"),
-            Message::PassHint => ("P pass", "P 跳过"),
             Message::GameUtilitiesHint => ("? help · Q quit", "? 帮助 · Q 退出"),
-            Message::Command => ("Command", "命令"),
             Message::ChooseColor => ("Choose a color", "选择颜色"),
             Message::ColorHint => (
                 "←/→ or h/l choose  Enter confirm  Esc cancel",
@@ -80,8 +71,8 @@ impl Language {
             Message::Winner => ("Round complete", "本局结束"),
             Message::NewMatchHint => ("N new match · Q quit", "N 新游戏 · Q 退出"),
             Message::TooSmall => (
-                "Terminal too small. Resize to at least 70 × 22.",
-                "终端尺寸过小，请调整到至少 70 × 22。",
+                "Terminal too small. Resize to at least 70 × 26.",
+                "终端尺寸过小，请调整到至少 70 × 26。",
             ),
             Message::YourTurn => ("Your turn", "轮到你了"),
             Message::Thinking => ("AI is thinking…", "AI 正在思考…"),
@@ -147,14 +138,14 @@ impl Language {
             (Self::English, GraphicsChoice::GraphicsBeta, GraphicsBackend::Sixel) => {
                 "Graphics (Beta) (Sixel)".to_owned()
             }
-            (Self::English, GraphicsChoice::GraphicsBeta, GraphicsBackend::Kitty) => {
-                "Graphics (Beta) (Kitty)".to_owned()
+            (Self::English, GraphicsChoice::GraphicsBeta, GraphicsBackend::Termwiz) => {
+                "Graphics (Beta) (Termwiz)".to_owned()
             }
             (Self::Chinese, GraphicsChoice::GraphicsBeta, GraphicsBackend::Sixel) => {
                 "图像（Beta）（Sixel）".to_owned()
             }
-            (Self::Chinese, GraphicsChoice::GraphicsBeta, GraphicsBackend::Kitty) => {
-                "图像（Beta）（Kitty）".to_owned()
+            (Self::Chinese, GraphicsChoice::GraphicsBeta, GraphicsBackend::Termwiz) => {
+                "图像（Beta）（Termwiz）".to_owned()
             }
             (Self::English, GraphicsChoice::GraphicsBeta, GraphicsBackend::Text(reason)) => {
                 format!(
@@ -277,22 +268,16 @@ pub enum Message {
     Graphics,
     Start,
     SetupHint,
-    Opponents,
     Table,
     SelectedCard,
     DiscardTop,
-    NoSelectedCard,
     YourHand,
     EventLog,
     Turn,
     ActiveColor,
     Direction,
     Cards,
-    PlayHint,
-    DrawHint,
-    PassHint,
     GameUtilitiesHint,
-    Command,
     ChooseColor,
     ColorHint,
     Help,
@@ -321,6 +306,7 @@ fn fallback_reason_english(reason: FallbackReason) -> &'static str {
     match reason {
         FallbackReason::Manual => "manual",
         FallbackReason::Ssh => "SSH",
+        FallbackReason::Tmux => "tmux",
         FallbackReason::Unsupported => "unsupported",
         FallbackReason::Encoding => "error",
     }
@@ -330,6 +316,7 @@ fn fallback_reason_chinese(reason: FallbackReason) -> &'static str {
     match reason {
         FallbackReason::Manual => "手动",
         FallbackReason::Ssh => "SSH",
+        FallbackReason::Tmux => "tmux",
         FallbackReason::Unsupported => "不支持",
         FallbackReason::Encoding => "错误",
     }
@@ -348,8 +335,8 @@ mod tests {
         assert_eq!(Language::English.difficulty(Difficulty::Extreme), "Extreme");
         assert_eq!(Language::Chinese.difficulty(Difficulty::Extreme), "最难");
         assert_eq!(
-            Language::English.graphics(GraphicsChoice::GraphicsBeta, GraphicsBackend::Kitty),
-            "Graphics (Beta) (Kitty)"
+            Language::English.graphics(GraphicsChoice::GraphicsBeta, GraphicsBackend::Termwiz),
+            "Graphics (Beta) (Termwiz)"
         );
         assert_eq!(
             Language::Chinese.graphics(
@@ -385,7 +372,7 @@ mod tests {
     fn navigation_hints_advertise_vim_keys_in_both_languages() {
         for language in Language::ALL {
             assert!(language.text(Message::SetupHint).contains("hjkl"));
-            assert!(language.text(Message::PlayHint).contains("hjkl"));
+            assert!(language.text(Message::HelpBody).contains("hjkl"));
             assert!(language.text(Message::ColorHint).contains("h/l"));
             assert!(language.text(Message::HelpBody).contains("hjkl"));
         }

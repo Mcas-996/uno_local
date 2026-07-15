@@ -54,7 +54,8 @@ The command shows the managed files and requires `y` or `yes` before removing th
 Only a matching cargo-dist installation is removed. Package-manager, Cargo, development, and manually copied builds are refused so they can be removed by the tool that installed them. Uninstalling removes `uno`, `uno-update`, and the install receipt; it preserves the shared Cargo bin directory and PATH configuration.
 
 ## Tips for players
-For better graphics, please use windows terminal or wezterm.
+
+UNO chooses its terminal frontend automatically. Local WezTerm sessions use the native Termwiz image path. Other local terminals use the universal text/Sixel frontend and enable images only after confirming Sixel support. SSH and tmux sessions always use text for predictable remote behavior. A terminal size of at least `70 × 26` is recommended.
 
 ## Notice
 

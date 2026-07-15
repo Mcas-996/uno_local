@@ -9,11 +9,10 @@ use crate::ai::{Difficulty, choose_action};
 use crate::core::{
     Action, Card, Color, DeckVariant, EventKind, Game, GameEvent, PlayerDrawRule, PlayerId,
 };
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
-use crate::graphics::GraphicsChoice;
+use crate::frontend::{GraphicsChoice, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crate::i18n::{Language, Message};
 
 const AI_DELAY: Duration = Duration::from_secs(1);
@@ -289,7 +288,7 @@ impl App {
                 let row_delta = if code == KeyCode::Up { -1 } else { 1 };
                 // 纵向导航必须使用 UI 的实际换行结果，才能在不同终端宽度下
                 // 选择视觉上最接近的上一行或下一行牌。
-                let selected_card = crate::ui::adjacent_hand_card(
+                let selected_card = crate::view::adjacent_hand_card(
                     self.language,
                     self.human_hand().unwrap_or_default(),
                     self.selected_card,
