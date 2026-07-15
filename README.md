@@ -9,7 +9,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-f7f73b)](LICENSE)
 [![Release](https://github.com/Mcas-996/uno_online/actions/workflows/release.yml/badge.svg)](https://github.com/Mcas-996/uno_online/actions/workflows/release.yml)
 
-https://github.com/user-attachments/assets/37a3b0e1-1527-4067-b81b-d49c915f5e90
+https://github.com/user-attachments/assets/cc9df2bd-9f94-40f0-80e9-aaa3eedeb704
 
 ## Quick Start
 ### 📋 Prerequisites
