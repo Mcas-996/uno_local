@@ -3,6 +3,7 @@
 //! English and Chinese labels for every table and Holiday card.
 
 use crate::ai::Difficulty;
+use crate::app::PlayMode;
 use crate::core::{Card, Color, DeckVariant, Direction, GameError, Rank};
 use crate::frontend::{FallbackReason, GraphicsBackend, GraphicsChoice};
 
@@ -35,7 +36,9 @@ impl Language {
         let (english, chinese) = match message {
             Message::Title => ("* UNO STAR CARNIVAL *", "* UNO 星光嘉年华 *"),
             Message::Setup => ("New local match", "新建本地对局"),
-            Message::PlayerName => ("Player name", "玩家名称"),
+            Message::Mode => ("Mode", "模式"),
+            Message::PlayerOne => ("Player 1", "玩家 1"),
+            Message::PlayerTwo => ("Player 2", "玩家 2"),
             Message::Bots => ("AI opponents", "电脑玩家"),
             Message::Difficulty => ("Difficulty", "难度"),
             Message::Deck => ("Deck", "牌组"),
@@ -55,7 +58,6 @@ impl Language {
             Message::ActiveColor => ("Active color", "当前颜色"),
             Message::Direction => ("Direction", "方向"),
             Message::Cards => ("cards", "张牌"),
-            Message::GameUtilitiesHint => ("? help · Q quit", "? 帮助 · Q 退出"),
             Message::ChooseColor => ("Choose a color", "选择颜色"),
             Message::ColorHint => (
                 "←/→ or h/l choose  Enter confirm  Esc cancel",
@@ -74,7 +76,6 @@ impl Language {
                 "Terminal too small. Resize to at least 70 × 26.",
                 "终端尺寸过小，请调整到至少 70 × 26。",
             ),
-            Message::YourTurn => ("Your turn", "轮到你了"),
             Message::Thinking => ("AI is thinking…", "AI 正在思考…"),
             Message::DrewCard => ("drew a card", "摸了一张牌"),
             Message::Passed => ("passed", "跳过回合"),
@@ -101,10 +102,51 @@ impl Language {
         }
     }
 
-    pub fn default_player_name(self) -> &'static str {
+    pub fn play_mode(self, mode: PlayMode) -> &'static str {
+        match (self, mode) {
+            (Self::English, PlayMode::Single) => "Single player",
+            (Self::English, PlayMode::Dual) => "Two players",
+            (Self::Chinese, PlayMode::Single) => "单人",
+            (Self::Chinese, PlayMode::Dual) => "双人",
+        }
+    }
+
+    pub fn turn_status(self, player_name: &str) -> String {
         match self {
-            Self::English => "Player",
-            Self::Chinese => "玩家",
+            Self::English => format!("{player_name}'s turn"),
+            Self::Chinese => format!("轮到 {player_name}"),
+        }
+    }
+
+    pub fn help_body(self, mode: PlayMode) -> &'static str {
+        match (self, mode) {
+            (Self::English, PlayMode::Single) => self.text(Message::HelpBody),
+            (Self::Chinese, PlayMode::Single) => self.text(Message::HelpBody),
+            (Self::English, PlayMode::Dual) => {
+                "* STAR CARNIVAL *\n\nTwo-player shortcuts\n  Left:  WASD select\n  Right: arrows/hjkl select\n  Enter play   X draw   P pass\n  : command    Q quit\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n\nCommands act for the current player.\nPress ? or Esc to return."
+            }
+            (Self::Chinese, PlayMode::Dual) => {
+                "* 星光嘉年华 *\n\n双人快捷键\n  左侧：WASD 选择手牌\n  右侧：方向键/hjkl 选择手牌\n  Enter 出牌  X 摸牌  P 跳过\n  : 输入命令  Q 退出\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n\n命令作用于当前玩家。\n按 ? 或 Esc 返回。"
+            }
+        }
+    }
+
+    pub fn game_hint(self, mode: PlayMode) -> &'static str {
+        match (self, mode) {
+            (Self::English, PlayMode::Single) => "Enter play · D draw · P pass · ? help · Q quit",
+            (Self::Chinese, PlayMode::Single) => "Enter 出牌 · D 摸牌 · P 跳过 · ? 帮助 · Q 退出",
+            (Self::English, PlayMode::Dual) => "Enter play · X draw · P pass · ? help · Q quit",
+            (Self::Chinese, PlayMode::Dual) => "Enter 出牌 · X 摸牌 · P 跳过 · ? 帮助 · Q 退出",
+        }
+    }
+
+    pub fn color_hint(self, mode: PlayMode, player_index: usize) -> &'static str {
+        match (self, mode, player_index) {
+            (Self::English, PlayMode::Dual, 0) => "A/D choose  Enter confirm  Esc cancel",
+            (Self::Chinese, PlayMode::Dual, 0) => "A/D 选择  Enter 确认  Esc 取消",
+            (Self::English, PlayMode::Dual, _) => "←/→ or h/l choose  Enter confirm  Esc cancel",
+            (Self::Chinese, PlayMode::Dual, _) => "←/→ 或 h/l 选择  Enter 确认  Esc 取消",
+            (_, PlayMode::Single, _) => self.text(Message::ColorHint),
         }
     }
 
@@ -260,7 +302,9 @@ impl Language {
 pub enum Message {
     Title,
     Setup,
-    PlayerName,
+    Mode,
+    PlayerOne,
+    PlayerTwo,
     Bots,
     Difficulty,
     Deck,
@@ -277,7 +321,6 @@ pub enum Message {
     ActiveColor,
     Direction,
     Cards,
-    GameUtilitiesHint,
     ChooseColor,
     ColorHint,
     Help,
@@ -287,7 +330,6 @@ pub enum Message {
     Winner,
     NewMatchHint,
     TooSmall,
-    YourTurn,
     Thinking,
     DrewCard,
     Passed,

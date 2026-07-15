@@ -14,6 +14,8 @@ Frontend precedence is deterministic:
 2. Local WezTerm sessions use Termwiz and default to graphics; Text remains selectable in setup.
 3. Other local terminals use the universal frontend. It defaults to graphics only after confirming Sixel support and valid cell-pixel dimensions; otherwise it uses Text.
 
+Setup supports single-player and local two-player matches. Two-player mode allows 0–3 AI opponents: the left player uses `WASD`, the right player uses arrows or `hjkl`, and both share `Enter/X/P` for play, draw, and pass.
+
 ## Source layout
 
 ```text

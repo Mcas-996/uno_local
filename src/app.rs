@@ -27,9 +27,27 @@ pub enum Screen {
     QuitConfirm,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlayMode {
+    Single,
+    Dual,
+}
+
+impl PlayMode {
+    pub const ALL: [Self; 2] = [Self::Single, Self::Dual];
+
+    pub const fn human_count(self) -> usize {
+        match self {
+            Self::Single => 1,
+            Self::Dual => 2,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Setup {
-    pub name: String,
+    pub mode: PlayMode,
+    pub names: [String; 2],
     pub bot_count: usize,
     pub difficulty: Difficulty,
     pub deck_variant: DeckVariant,
@@ -41,14 +59,21 @@ pub struct Setup {
 impl Setup {
     fn new(language: Language, graphics: GraphicsChoice) -> Self {
         Self {
-            name: language.default_player_name().to_owned(),
+            mode: PlayMode::Single,
+            names: default_player_names(language),
             bot_count: 3,
             difficulty: Difficulty::Normal,
             deck_variant: DeckVariant::Holiday,
             graphics,
-            selected: 0,
+            selected: 1,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PendingWild {
+    pub player_index: usize,
+    pub card: Card,
 }
 
 pub struct App {
@@ -56,12 +81,12 @@ pub struct App {
     pub screen: Screen,
     pub setup: Setup,
     pub game: Option<Game>,
-    pub human_id: PlayerId,
+    pub human_ids: [PlayerId; 2],
     pub ai_ids: Vec<PlayerId>,
-    pub selected_card: usize,
+    pub selected_cards: [usize; 2],
     pub command_mode: bool,
     pub command: String,
-    pub pending_wild: Option<Card>,
+    pub pending_wild: Option<PendingWild>,
     pub selected_color: usize,
     pub logs: VecDeque<String>,
     pub status: String,
@@ -84,9 +109,9 @@ impl App {
             screen: Screen::Setup,
             setup: Setup::new(language, graphics),
             game: None,
-            human_id: PlayerId::new("human"),
+            human_ids: [PlayerId::new("human-1"), PlayerId::new("human-2")],
             ai_ids: Vec::new(),
-            selected_card: 0,
+            selected_cards: [0; 2],
             command_mode: false,
             command: String::new(),
             pending_wild: None,
@@ -101,12 +126,17 @@ impl App {
     }
 
     pub fn start_match(&mut self) -> Result<(), String> {
-        let player_name = if self.setup.name.trim().is_empty() {
-            self.language.default_player_name().to_owned()
-        } else {
-            self.setup.name.trim().to_owned()
-        };
-        let mut players = vec![(self.human_id.clone(), player_name)];
+        let human_count = self.setup.mode.human_count();
+        let mut players = (0..human_count)
+            .map(|index| {
+                let name = if self.setup.names[index].trim().is_empty() {
+                    default_player_names(self.language)[index].clone()
+                } else {
+                    self.setup.names[index].trim().to_owned()
+                };
+                (self.human_ids[index].clone(), name)
+            })
+            .collect::<Vec<_>>();
         self.ai_ids = (1..=self.setup.bot_count)
             .map(|index| PlayerId::new(format!("ai-{index}")))
             .collect();
@@ -117,8 +147,11 @@ impl App {
             };
             (id.clone(), name)
         }));
-        let player_draw_rules =
-            draw_rules_for_match(self.setup.difficulty, &self.human_id, &self.ai_ids);
+        let player_draw_rules = draw_rules_for_match(
+            self.setup.difficulty,
+            &self.human_ids[..human_count],
+            &self.ai_ids,
+        );
         self.game = Some(
             if self.setup.deck_variant == DeckVariant::Holiday {
                 Game::new_with_draw_rules(players, self.setup.deck_variant, player_draw_rules)
@@ -128,11 +161,11 @@ impl App {
             .map_err(|error| error.to_string())?,
         );
         self.screen = Screen::Game;
-        self.selected_card = 0;
+        self.selected_cards = [0; 2];
         self.command_mode = false;
         self.pending_wild = None;
         self.logs.clear();
-        self.status = self.language.text(Message::YourTurn).to_owned();
+        self.update_turn_status();
         self.ai_deadline = Instant::now() + AI_DELAY;
         Ok(())
     }
@@ -175,7 +208,7 @@ impl App {
         let Some(game) = self.game.as_ref() else {
             return;
         };
-        if game.public_state().winner.is_some() || game.current_player() == &self.human_id {
+        if game.public_state().winner.is_some() || self.is_human(game.current_player()) {
             return;
         }
         if Instant::now() < self.ai_deadline {
@@ -187,32 +220,34 @@ impl App {
     fn handle_setup_key(&mut self, key: KeyEvent) {
         // The name field remains a text input, so Vim keys only become
         // navigation aliases after the player leaves that field.
-        let code = if self.setup.selected == 0 {
+        let editing_name = self.setup.selected == 1
+            || (self.setup.selected == 2 && self.setup.mode == PlayMode::Dual);
+        let code = if editing_name {
             key.code
         } else {
             navigation_code(key)
         };
         match code {
             KeyCode::Up => self.setup.selected = self.setup.selected.saturating_sub(1),
-            KeyCode::Down => self.setup.selected = (self.setup.selected + 1).min(6),
+            KeyCode::Down => self.setup.selected = (self.setup.selected + 1).min(8),
             KeyCode::Left => self.adjust_setup(-1),
             KeyCode::Right => self.adjust_setup(1),
-            KeyCode::Enter if self.setup.selected == 6 => {
+            KeyCode::Enter if self.setup.selected == 8 => {
                 if let Err(error) = self.start_match() {
                     self.status = error;
                 }
             }
-            KeyCode::Enter => self.setup.selected = (self.setup.selected + 1).min(6),
-            KeyCode::Backspace if self.setup.selected == 0 => {
-                self.setup.name.pop();
+            KeyCode::Enter => self.setup.selected = (self.setup.selected + 1).min(8),
+            KeyCode::Backspace if editing_name => {
+                self.setup.names[self.setup.selected - 1].pop();
             }
             KeyCode::Esc => self.should_exit = true,
             KeyCode::Char(character)
-                if self.setup.selected == 0
+                if editing_name
                     && !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && self.setup.name.chars().count() < 20 =>
+                    && self.setup.names[self.setup.selected - 1].chars().count() < 20 =>
             {
-                self.setup.name.push(character);
+                self.setup.names[self.setup.selected - 1].push(character);
             }
             _ => {}
         }
@@ -220,14 +255,31 @@ impl App {
 
     fn adjust_setup(&mut self, delta: isize) {
         match self.setup.selected {
-            1 => {
+            0 => {
+                let index = PlayMode::ALL
+                    .iter()
+                    .position(|candidate| *candidate == self.setup.mode)
+                    .unwrap_or(0)
+                    .saturating_add_signed(delta)
+                    .clamp(0, PlayMode::ALL.len() - 1);
+                self.setup.mode = PlayMode::ALL[index];
+                self.setup.bot_count = match self.setup.mode {
+                    PlayMode::Single => self.setup.bot_count.clamp(1, 4),
+                    PlayMode::Dual => self.setup.bot_count.min(3),
+                };
+            }
+            3 => {
+                let (minimum, maximum) = match self.setup.mode {
+                    PlayMode::Single => (1, 4),
+                    PlayMode::Dual => (0, 3),
+                };
                 self.setup.bot_count = self
                     .setup
                     .bot_count
                     .saturating_add_signed(delta)
-                    .clamp(1, 4);
+                    .clamp(minimum, maximum);
             }
-            2 => {
+            4 => {
                 let index = Difficulty::ALL
                     .iter()
                     .position(|candidate| *candidate == self.setup.difficulty)
@@ -236,7 +288,7 @@ impl App {
                     .clamp(0, Difficulty::ALL.len() - 1);
                 self.setup.difficulty = Difficulty::ALL[index];
             }
-            3 => {
+            5 => {
                 let index = DeckVariant::ALL
                     .iter()
                     .position(|candidate| *candidate == self.setup.deck_variant)
@@ -245,8 +297,9 @@ impl App {
                     .clamp(0, DeckVariant::ALL.len() - 1);
                 self.setup.deck_variant = DeckVariant::ALL[index];
             }
-            4 => {
+            6 => {
                 let old_language = self.language;
+                let old_defaults = default_player_names(old_language);
                 let index = Language::ALL
                     .iter()
                     .position(|candidate| *candidate == self.language)
@@ -254,11 +307,14 @@ impl App {
                     .saturating_add_signed(delta)
                     .clamp(0, Language::ALL.len() - 1);
                 self.language = Language::ALL[index];
-                if self.setup.name == old_language.default_player_name() {
-                    self.setup.name = self.language.default_player_name().to_owned();
+                let new_defaults = default_player_names(self.language);
+                for index in 0..2 {
+                    if self.setup.names[index] == old_defaults[index] {
+                        self.setup.names[index] = new_defaults[index].clone();
+                    }
                 }
             }
-            5 => {
+            7 => {
                 // 此处只保存 Text/Graphics Beta 偏好，不在输入处理阶段探测或切换协议；
                 // UI 每帧通过 GraphicsRuntime 解析实际后端。
                 let index = GraphicsChoice::ALL
@@ -282,37 +338,81 @@ impl App {
             self.handle_color_key(key);
             return;
         }
-        let code = navigation_code(key);
-        match code {
-            KeyCode::Up | KeyCode::Down => {
-                let row_delta = if code == KeyCode::Up { -1 } else { 1 };
-                // 纵向导航必须使用 UI 的实际换行结果，才能在不同终端宽度下
-                // 选择视觉上最接近的上一行或下一行牌。
-                let selected_card = crate::view::adjacent_hand_card(
-                    self.language,
-                    self.human_hand().unwrap_or_default(),
-                    self.selected_card,
-                    terminal_width.saturating_sub(2) as usize,
-                    row_delta,
-                );
-                self.selected_card = selected_card;
+        if let Some((player_index, code)) = self.player_navigation(key) {
+            self.navigate_hand(player_index, code, terminal_width);
+            return;
+        }
+        match key.code {
+            KeyCode::Enter => self.play_current_human_selected(),
+            KeyCode::Char('d' | 'D') if self.setup.mode == PlayMode::Single => {
+                self.submit_current_human(Action::Draw)
             }
-            KeyCode::Left => self.selected_card = self.selected_card.saturating_sub(1),
-            KeyCode::Right => {
-                let len = self.human_hand().map_or(0, <[Card]>::len);
-                if len > 0 {
-                    self.selected_card = (self.selected_card + 1).min(len - 1);
-                }
+            KeyCode::Char('x' | 'X') if self.setup.mode == PlayMode::Dual => {
+                self.submit_current_human(Action::Draw)
             }
-            KeyCode::Enter => self.play_selected(),
-            KeyCode::Char('d' | 'D') => self.submit_human(Action::Draw),
-            KeyCode::Char('p' | 'P') => self.submit_human(Action::Pass),
+            KeyCode::Char('p' | 'P') => self.submit_current_human(Action::Pass),
             KeyCode::Char(':') => {
                 self.command_mode = true;
                 self.command.clear();
             }
             KeyCode::Char('?') => self.open_help(),
             KeyCode::Char('q' | 'Q') => self.open_quit(),
+            _ => {}
+        }
+    }
+
+    fn player_navigation(&self, key: KeyEvent) -> Option<(usize, KeyCode)> {
+        if self.setup.mode == PlayMode::Single {
+            let code = navigation_code(key);
+            return matches!(
+                code,
+                KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right
+            )
+            .then_some((0, code));
+        }
+        if key.modifiers != KeyModifiers::NONE {
+            return None;
+        }
+        match key.code {
+            KeyCode::Char('w') => Some((0, KeyCode::Up)),
+            KeyCode::Char('s') => Some((0, KeyCode::Down)),
+            KeyCode::Char('a') => Some((0, KeyCode::Left)),
+            KeyCode::Char('d') => Some((0, KeyCode::Right)),
+            KeyCode::Char('k') | KeyCode::Up => Some((1, KeyCode::Up)),
+            KeyCode::Char('j') | KeyCode::Down => Some((1, KeyCode::Down)),
+            KeyCode::Char('h') | KeyCode::Left => Some((1, KeyCode::Left)),
+            KeyCode::Char('l') | KeyCode::Right => Some((1, KeyCode::Right)),
+            _ => None,
+        }
+    }
+
+    fn navigate_hand(&mut self, player_index: usize, code: KeyCode, terminal_width: u16) {
+        let hand_width = match self.setup.mode {
+            PlayMode::Single => terminal_width.saturating_sub(4),
+            PlayMode::Dual => terminal_width.saturating_div(2).saturating_sub(3),
+        } as usize;
+        match code {
+            KeyCode::Up | KeyCode::Down => {
+                let row_delta = if code == KeyCode::Up { -1 } else { 1 };
+                self.selected_cards[player_index] = crate::view::adjacent_hand_card(
+                    self.language,
+                    self.human_hand(player_index).unwrap_or_default(),
+                    self.selected_cards[player_index],
+                    hand_width,
+                    row_delta,
+                );
+            }
+            KeyCode::Left => {
+                self.selected_cards[player_index] =
+                    self.selected_cards[player_index].saturating_sub(1);
+            }
+            KeyCode::Right => {
+                let len = self.human_hand(player_index).map_or(0, <[Card]>::len);
+                if len > 0 {
+                    self.selected_cards[player_index] =
+                        (self.selected_cards[player_index] + 1).min(len - 1);
+                }
+            }
             _ => {}
         }
     }
@@ -342,48 +442,76 @@ impl App {
     }
 
     fn handle_color_key(&mut self, key: KeyEvent) {
-        match navigation_code(key) {
+        let Some(pending) = self.pending_wild else {
+            return;
+        };
+        let navigation = self
+            .player_navigation(key)
+            .filter(|(player_index, _)| *player_index == pending.player_index)
+            .map(|(_, code)| code)
+            .unwrap_or(key.code);
+        match navigation {
             KeyCode::Left => self.selected_color = self.selected_color.saturating_sub(1),
             KeyCode::Right => self.selected_color = (self.selected_color + 1).min(3),
             KeyCode::Esc => self.pending_wild = None,
             KeyCode::Enter => {
-                if let Some(card) = self.pending_wild.take() {
-                    self.submit_human(Action::Play {
-                        card,
-                        chosen_color: Some(Color::ALL[self.selected_color]),
-                    });
+                if let Some(pending) = self.pending_wild.take() {
+                    self.submit_human(
+                        pending.player_index,
+                        Action::Play {
+                            card: pending.card,
+                            chosen_color: Some(Color::ALL[self.selected_color]),
+                        },
+                    );
                 }
             }
             _ => {}
         }
     }
 
-    fn play_selected(&mut self) {
+    fn play_current_human_selected(&mut self) {
+        let Some(player_index) = self.current_human_index() else {
+            return;
+        };
+        self.play_selected(player_index);
+    }
+
+    fn play_selected(&mut self, player_index: usize) {
         let Some(card) = self
-            .human_hand()
-            .and_then(|hand| hand.get(self.selected_card))
+            .human_hand(player_index)
+            .and_then(|hand| hand.get(self.selected_cards[player_index]))
             .copied()
         else {
             self.status = self.language.text(Message::InvalidCardIndex).to_owned();
             return;
         };
         if card.is_wild() {
-            self.pending_wild = Some(card);
+            self.pending_wild = Some(PendingWild { player_index, card });
             self.selected_color = 0;
         } else {
-            self.submit_human(Action::Play {
-                card,
-                chosen_color: None,
-            });
+            self.submit_human(
+                player_index,
+                Action::Play {
+                    card,
+                    chosen_color: None,
+                },
+            );
         }
     }
 
-    fn submit_human(&mut self, action: Action) {
+    fn submit_current_human(&mut self, action: Action) {
+        let Some(player_index) = self.current_human_index() else {
+            return;
+        };
+        self.submit_human(player_index, action);
+    }
+
+    fn submit_human(&mut self, player_index: usize, action: Action) {
         let result = self
             .game
             .as_mut()
             .expect("game screen has game")
-            .apply_action(&self.human_id, action);
+            .apply_action(&self.human_ids[player_index], action);
         match result {
             Ok(event) => self.after_event(event),
             Err(error) => self.status = self.language.game_error(&error),
@@ -458,15 +586,15 @@ impl App {
             }
             self.status = line;
         }
-        let hand_len = self.human_hand().map_or(0, <[Card]>::len);
-        self.selected_card = self.selected_card.min(hand_len.saturating_sub(1));
+        for player_index in 0..self.setup.mode.human_count() {
+            let hand_len = self.human_hand(player_index).map_or(0, <[Card]>::len);
+            self.selected_cards[player_index] =
+                self.selected_cards[player_index].min(hand_len.saturating_sub(1));
+        }
         if state.winner.is_some() {
             self.screen = Screen::Result;
-        } else if state.current_player == self.human_id {
-            self.status = self.language.text(Message::YourTurn).to_owned();
         } else {
-            self.status = self.language.text(Message::Thinking).to_owned();
-            self.ai_deadline = Instant::now() + AI_DELAY;
+            self.update_turn_status();
         }
     }
 
@@ -477,11 +605,14 @@ impl App {
                     self.status = self.language.text(Message::InvalidCardIndex).to_owned();
                     return;
                 }
-                self.selected_card = index - 1;
-                self.play_selected();
+                let Some(player_index) = self.current_human_index() else {
+                    return;
+                };
+                self.selected_cards[player_index] = index - 1;
+                self.play_selected(player_index);
             }
-            Ok(AppCommand::Draw) => self.submit_human(Action::Draw),
-            Ok(AppCommand::Pass) => self.submit_human(Action::Pass),
+            Ok(AppCommand::Draw) => self.submit_current_human(Action::Draw),
+            Ok(AppCommand::Pass) => self.submit_current_human(Action::Pass),
             Ok(AppCommand::Help) => self.open_help(),
             Ok(AppCommand::New) => self.return_to_setup(),
             Ok(AppCommand::Quit) => self.open_quit(),
@@ -508,10 +639,47 @@ impl App {
         self.status.clear();
     }
 
-    pub fn human_hand(&self) -> Option<&[Card]> {
+    pub fn human_hand(&self, player_index: usize) -> Option<&[Card]> {
         self.game
             .as_ref()
-            .and_then(|game| game.hand_for(&self.human_id).ok())
+            .and_then(|game| game.hand_for(&self.human_ids[player_index]).ok())
+    }
+
+    pub fn current_human_index(&self) -> Option<usize> {
+        let current = self.game.as_ref()?.current_player();
+        self.human_ids[..self.setup.mode.human_count()]
+            .iter()
+            .position(|id| id == current)
+    }
+
+    pub fn selected_human_card(&self) -> Option<Card> {
+        let player_index = self.current_human_index()?;
+        self.human_hand(player_index)?
+            .get(self.selected_cards[player_index])
+            .copied()
+    }
+
+    pub fn is_human(&self, player: &PlayerId) -> bool {
+        self.human_ids[..self.setup.mode.human_count()].contains(player)
+    }
+
+    fn update_turn_status(&mut self) {
+        let Some(game) = self.game.as_ref() else {
+            return;
+        };
+        if let Some(player_index) = self.current_human_index() {
+            let name = game
+                .public_state()
+                .players
+                .into_iter()
+                .find(|player| player.id == self.human_ids[player_index])
+                .map(|player| player.name)
+                .unwrap_or_default();
+            self.status = self.language.turn_status(&name);
+        } else {
+            self.status = self.language.text(Message::Thinking).to_owned();
+            self.ai_deadline = Instant::now() + AI_DELAY;
+        }
     }
 }
 
@@ -532,7 +700,7 @@ fn navigation_code(key: KeyEvent) -> KeyCode {
 
 fn draw_rules_for_match(
     difficulty: Difficulty,
-    human_id: &PlayerId,
+    human_ids: &[PlayerId],
     ai_ids: &[PlayerId],
 ) -> BTreeMap<PlayerId, PlayerDrawRule> {
     let ai_draw_rule = match difficulty {
@@ -552,9 +720,16 @@ fn draw_rules_for_match(
         Difficulty::Hard | Difficulty::Extreme => None,
     };
     if let Some(rule) = human_draw_rule {
-        rules.insert(human_id.clone(), rule);
+        rules.extend(human_ids.iter().cloned().map(|id| (id, rule)));
     }
     rules
+}
+
+fn default_player_names(language: Language) -> [String; 2] {
+    match language {
+        Language::English => ["Player".to_owned(), "Player 2".to_owned()],
+        Language::Chinese => ["玩家".to_owned(), "玩家 2".to_owned()],
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -596,7 +771,7 @@ mod tests {
         let human = PlayerId::new("human");
         let bots = [PlayerId::new("ai-1"), PlayerId::new("ai-2")];
 
-        let easy = draw_rules_for_match(Difficulty::Easy, &human, &bots);
+        let easy = draw_rules_for_match(Difficulty::Easy, std::slice::from_ref(&human), &bots);
         assert_eq!(
             easy[&human],
             PlayerDrawRule::GuaranteeDrawEightPerFiveAndSixteenPerTen
@@ -606,7 +781,7 @@ mod tests {
                 .all(|id| { easy[id] == PlayerDrawRule::ExcludeDrawEightAndSixteen })
         );
 
-        let normal = draw_rules_for_match(Difficulty::Normal, &human, &bots);
+        let normal = draw_rules_for_match(Difficulty::Normal, std::slice::from_ref(&human), &bots);
         assert_eq!(normal[&human], PlayerDrawRule::GuaranteeDrawEightPerTwenty);
         assert!(
             bots.iter()
@@ -614,8 +789,19 @@ mod tests {
         );
 
         for difficulty in [Difficulty::Hard, Difficulty::Extreme] {
-            assert!(!draw_rules_for_match(difficulty, &human, &bots).contains_key(&human));
+            assert!(
+                !draw_rules_for_match(difficulty, std::slice::from_ref(&human), &bots)
+                    .contains_key(&human)
+            );
         }
+
+        let second_human = PlayerId::new("human-2");
+        let dual = draw_rules_for_match(
+            Difficulty::Easy,
+            &[human.clone(), second_human.clone()],
+            &bots,
+        );
+        assert_eq!(dual[&human], dual[&second_human]);
     }
 
     #[test]
@@ -653,12 +839,24 @@ mod tests {
             app.game.as_ref().unwrap().deck_variant(),
             DeckVariant::Standard
         );
+
+        app.return_to_setup();
+        app.setup.mode = PlayMode::Dual;
+        for bots in 0..=3 {
+            app.setup.bot_count = bots;
+            app.start_match().unwrap();
+            assert_eq!(
+                app.game.as_ref().unwrap().public_state().players.len(),
+                bots + 2
+            );
+            app.return_to_setup();
+        }
     }
 
     #[test]
     fn setup_adjustments_stay_in_range() {
         let mut app = App::new(Language::English);
-        app.setup.selected = 1;
+        app.setup.selected = 3;
         for _ in 0..10 {
             app.adjust_setup(-1);
         }
@@ -669,14 +867,14 @@ mod tests {
         assert_eq!(app.setup.bot_count, 4);
 
         assert_eq!(app.setup.deck_variant, DeckVariant::Holiday);
-        app.setup.selected = 3;
+        app.setup.selected = 5;
         app.adjust_setup(-1);
         assert_eq!(app.setup.deck_variant, DeckVariant::Standard);
         app.adjust_setup(1);
         app.adjust_setup(1);
         assert_eq!(app.setup.deck_variant, DeckVariant::Holiday);
 
-        app.setup.selected = 2;
+        app.setup.selected = 4;
         for _ in 0..10 {
             app.adjust_setup(1);
         }
@@ -685,28 +883,42 @@ mod tests {
             app.adjust_setup(-1);
         }
         assert_eq!(app.setup.difficulty, Difficulty::Easy);
+
+        app.setup.selected = 0;
+        app.adjust_setup(1);
+        assert_eq!(app.setup.mode, PlayMode::Dual);
+        app.setup.selected = 3;
+        for _ in 0..10 {
+            app.adjust_setup(-1);
+        }
+        assert_eq!(app.setup.bot_count, 0);
+        for _ in 0..10 {
+            app.adjust_setup(1);
+        }
+        assert_eq!(app.setup.bot_count, 3);
     }
 
     #[test]
     fn setup_language_setting_switches_copy_and_preserves_custom_name() {
         let mut app = App::new(Language::English);
-        app.setup.selected = 4;
+        app.setup.selected = 6;
 
         app.adjust_setup(1);
         assert_eq!(app.language, Language::Chinese);
-        assert_eq!(app.setup.name, "玩家");
+        assert_eq!(app.setup.names, ["玩家", "玩家 2"]);
 
-        app.setup.name = "Alex".to_owned();
+        app.setup.names[0] = "Alex".to_owned();
         app.adjust_setup(-1);
         assert_eq!(app.language, Language::English);
-        assert_eq!(app.setup.name, "Alex");
+        assert_eq!(app.setup.names[0], "Alex");
+        assert_eq!(app.setup.names[1], "Player 2");
     }
 
     #[test]
     fn setup_graphics_setting_switches_between_text_and_graphics_beta() {
         let mut app = App::new(Language::English);
         assert_eq!(app.setup.graphics, GraphicsChoice::Text);
-        app.setup.selected = 5;
+        app.setup.selected = 7;
 
         app.adjust_setup(1);
         assert_eq!(app.setup.graphics, GraphicsChoice::GraphicsBeta);
@@ -732,7 +944,7 @@ mod tests {
         );
         assert_eq!(app.setup.selected, 2);
 
-        app.setup.selected = 1;
+        app.setup.selected = 3;
         app.setup.bot_count = 3;
         app.handle_key(
             KeyEvent::new_with_kind(KeyCode::Left, KeyModifiers::NONE, KeyEventKind::Release),
@@ -771,13 +983,13 @@ mod tests {
                 80,
             );
         }
-        assert_eq!(app.setup.name, "Playerhjkl");
+        assert_eq!(app.setup.names[0], "Playerhjkl");
 
-        app.setup.selected = 2;
+        app.setup.selected = 4;
         app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), 80);
-        assert_eq!(app.setup.selected, 1);
+        assert_eq!(app.setup.selected, 3);
         app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 80);
-        assert_eq!(app.setup.selected, 2);
+        assert_eq!(app.setup.selected, 4);
 
         app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 80);
         assert_eq!(app.setup.difficulty, Difficulty::Easy);
@@ -786,7 +998,7 @@ mod tests {
 
         app.handle_key(KeyEvent::new(KeyCode::Char('J'), KeyModifiers::SHIFT), 80);
         app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL), 80);
-        assert_eq!(app.setup.selected, 2);
+        assert_eq!(app.setup.selected, 4);
     }
 
     #[test]
@@ -812,19 +1024,19 @@ mod tests {
         let mut app = App::new(Language::English);
         app.setup.bot_count = 1;
         app.start_match().unwrap();
-        app.selected_card = 1;
+        app.selected_cards[0] = 1;
 
         app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), 12);
-        assert_eq!(app.selected_card, 0);
+        assert_eq!(app.selected_cards[0], 0);
 
         app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 12);
-        assert_eq!(app.selected_card, 1);
+        assert_eq!(app.selected_cards[0], 1);
 
         app.handle_key(
             KeyEvent::new_with_kind(KeyCode::Down, KeyModifiers::NONE, KeyEventKind::Release),
             12,
         );
-        assert_eq!(app.selected_card, 1);
+        assert_eq!(app.selected_cards[0], 1);
     }
 
     #[test]
@@ -832,16 +1044,70 @@ mod tests {
         let mut app = App::new(Language::English);
         app.setup.bot_count = 1;
         app.start_match().unwrap();
-        app.selected_card = 1;
+        app.selected_cards[0] = 1;
 
         app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 12);
-        assert_eq!(app.selected_card, 0);
+        assert_eq!(app.selected_cards[0], 0);
         app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE), 12);
-        assert_eq!(app.selected_card, 1);
+        assert_eq!(app.selected_cards[0], 1);
         app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), 12);
-        assert_eq!(app.selected_card, 0);
+        assert_eq!(app.selected_cards[0], 0);
         app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), 12);
-        assert_eq!(app.selected_card, 1);
+        assert_eq!(app.selected_cards[0], 1);
+    }
+
+    #[test]
+    fn dual_mode_routes_navigation_and_uses_x_to_draw() {
+        let mut app = App::new(Language::English);
+        app.setup.mode = PlayMode::Dual;
+        app.setup.bot_count = 0;
+        app.start_match().unwrap();
+        app.selected_cards = [1, 1];
+        let first_hand_len = app.human_hand(0).unwrap().len();
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 80);
+        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 80);
+        assert_eq!(app.selected_cards, [0, 0]);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE), 80);
+        assert_eq!(app.selected_cards[0], 1);
+        assert_eq!(app.human_hand(0).unwrap().len(), first_hand_len);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), 80);
+        assert_eq!(app.human_hand(0).unwrap().len(), first_hand_len + 1);
+    }
+
+    #[test]
+    fn dual_mode_allows_inactive_player_preselection() {
+        let mut app = App::new(Language::English);
+        app.setup.mode = PlayMode::Dual;
+        app.setup.bot_count = 0;
+        app.start_match().unwrap();
+        assert_eq!(app.current_human_index(), Some(0));
+
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), 80);
+        assert_eq!(app.selected_cards[1], 1);
+        assert_eq!(app.current_human_index(), Some(0));
+    }
+
+    #[test]
+    fn dual_color_picker_only_accepts_current_players_navigation() {
+        let mut app = App::new(Language::English);
+        app.setup.mode = PlayMode::Dual;
+        app.setup.bot_count = 0;
+        app.start_match().unwrap();
+        app.pending_wild = Some(PendingWild {
+            player_index: 0,
+            card: Card::wild(crate::core::Rank::Wild),
+        });
+        app.selected_color = 1;
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 80);
+        assert_eq!(app.selected_color, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 80);
+        assert_eq!(app.selected_color, 0);
+        app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE), 80);
+        assert_eq!(app.selected_color, 1);
     }
 
     #[test]
@@ -849,7 +1115,10 @@ mod tests {
         let mut app = App::new(Language::English);
         app.setup.bot_count = 1;
         app.start_match().unwrap();
-        app.pending_wild = Some(Card::wild(crate::core::Rank::Wild));
+        app.pending_wild = Some(PendingWild {
+            player_index: 0,
+            card: Card::wild(crate::core::Rank::Wild),
+        });
         app.selected_color = 1;
 
         app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 80);

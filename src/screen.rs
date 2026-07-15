@@ -1,8 +1,8 @@
 //! Small retained cell surface shared by the two renderers.
 
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{App, Screen};
+use crate::app::{App, PlayMode, Screen};
 use crate::core::{Card, Color};
 use crate::frontend::{GraphicsBackend, GraphicsChoice, Viewport};
 use crate::i18n::Message;
@@ -134,8 +134,18 @@ impl Canvas {
     }
 
     pub fn centered_text(&mut self, y: u16, text: &str, style: Style) {
-        let width = unicode_width::UnicodeWidthStr::width(text) as u16;
+        let width = UnicodeWidthStr::width(text) as u16;
         self.text(self.width.saturating_sub(width) / 2, y, text, style);
+    }
+
+    fn clear(&mut self, rect: Rect) {
+        let max_x = rect.x.saturating_add(rect.width).min(self.width);
+        let max_y = rect.y.saturating_add(rect.height).min(self.height);
+        for y in rect.y..max_y {
+            for x in rect.x..max_x {
+                self.put(x, y, ' ', Style::default(), false);
+            }
+        }
     }
 
     pub fn border(&mut self, rect: Rect, title: &str) {
@@ -238,7 +248,7 @@ pub fn render(app: &App, backend: GraphicsBackend, viewport: Viewport) -> Canvas
         Screen::Help => render_overlay(
             &mut canvas,
             app.language.text(Message::Help),
-            app.language.text(Message::HelpBody),
+            app.language.help_body(app.setup.mode),
         ),
         Screen::Result => render_result(&mut canvas, app),
         Screen::QuitConfirm => render_overlay(
@@ -260,10 +270,14 @@ pub fn render(app: &App, backend: GraphicsBackend, viewport: Viewport) -> Canvas
             })
             .collect::<Vec<_>>()
             .join("  ");
-        render_overlay(
+        let player_index = app.pending_wild.map_or(0, |pending| pending.player_index);
+        render_compact_overlay(
             &mut canvas,
             app.language.text(Message::ChooseColor),
-            &format!("{colors}\n{}", app.language.text(Message::ColorHint)),
+            &format!(
+                "{colors}\n{}",
+                app.language.color_hint(app.setup.mode, player_index)
+            ),
         );
     }
     canvas
@@ -286,12 +300,23 @@ fn render_setup(canvas: &mut Canvas, app: &App, backend: GraphicsBackend) {
             ..Style::default()
         },
     );
+    let player_two = if app.setup.mode == PlayMode::Dual {
+        app.setup.names[1].clone()
+    } else {
+        "—".to_owned()
+    };
     let values = [
         format!(
             "{}: {}",
-            app.language.text(Message::PlayerName),
-            app.setup.name
+            app.language.text(Message::Mode),
+            app.language.play_mode(app.setup.mode)
         ),
+        format!(
+            "{}: {}",
+            app.language.text(Message::PlayerOne),
+            app.setup.names[0]
+        ),
+        format!("{}: {}", app.language.text(Message::PlayerTwo), player_two),
         format!(
             "{}: {}",
             app.language.text(Message::Bots),
@@ -371,7 +396,7 @@ fn render_game(canvas: &mut Canvas, app: &App, images: bool) {
     let opponents = state
         .players
         .iter()
-        .filter(|p| p.id != app.human_id)
+        .filter(|p| !app.is_human(&p.id))
         .map(|p| {
             format!(
                 "{}: {} {}",
@@ -386,10 +411,25 @@ fn render_game(canvas: &mut Canvas, app: &App, images: bool) {
     if images {
         let half = canvas.width / 2;
         let card_width = 12.min(half.saturating_sub(4));
-        let selected = app
-            .human_hand()
-            .and_then(|hand| hand.get(app.selected_card))
-            .copied();
+        let selected = app.selected_human_card();
+        let selected_title = app
+            .current_human_index()
+            .and_then(|index| {
+                state
+                    .players
+                    .iter()
+                    .find(|player| player.id == app.human_ids[index])
+            })
+            .map_or_else(
+                || app.language.text(Message::SelectedCard).to_owned(),
+                |player| {
+                    format!(
+                        "{}: {}",
+                        app.language.text(Message::SelectedCard),
+                        player.name
+                    )
+                },
+            );
         canvas.border(
             Rect {
                 x: 1,
@@ -397,7 +437,7 @@ fn render_game(canvas: &mut Canvas, app: &App, images: bool) {
                 width: half.saturating_sub(2),
                 height: 9,
             },
-            app.language.text(Message::SelectedCard),
+            &selected_title,
         );
         canvas.border(
             Rect {
@@ -460,38 +500,60 @@ fn render_game(canvas: &mut Canvas, app: &App, images: bool) {
         );
     }
     let hand_y = if images { 13 } else { 9 };
-    canvas.border(
-        Rect {
-            x: 1,
-            y: hand_y,
-            width: canvas.width - 2,
-            height: 6,
-        },
-        app.language.text(Message::YourHand),
-    );
-    for (row_index, row) in wrap_hand(
-        app.language,
-        app.human_hand().unwrap_or_default(),
-        canvas.width.saturating_sub(4) as usize,
-    )
-    .into_iter()
-    .take(4)
-    .enumerate()
-    {
-        let mut x = 2;
-        for (index, entry) in row {
-            canvas.text(
-                x,
-                hand_y + 1 + row_index as u16,
-                &entry,
-                Style::fg(
-                    app.human_hand().unwrap()[index]
-                        .color
-                        .map_or(UiColor::Magenta, color),
-                )
-                .selected(index == app.selected_card),
+    if app.setup.mode == PlayMode::Single {
+        render_hand_panel(
+            canvas,
+            app,
+            0,
+            Rect {
+                x: 1,
+                y: hand_y,
+                width: canvas.width - 2,
+                height: 6,
+            },
+            app.language.text(Message::YourHand),
+        );
+    } else {
+        let half = canvas.width / 2;
+        for (player_index, rect, controls) in [
+            (
+                0,
+                Rect {
+                    x: 1,
+                    y: hand_y,
+                    width: half.saturating_sub(1),
+                    height: 6,
+                },
+                "WASD",
+            ),
+            (
+                1,
+                Rect {
+                    x: half,
+                    y: hand_y,
+                    width: canvas.width.saturating_sub(half + 1),
+                    height: 6,
+                },
+                "hjkl/Arrows",
+            ),
+        ] {
+            let name = state
+                .players
+                .iter()
+                .find(|player| player.id == app.human_ids[player_index])
+                .map_or("?", |player| player.name.as_str());
+            let marker = if state.current_player == app.human_ids[player_index] {
+                "*"
+            } else {
+                ""
+            };
+            render_hand_panel(
+                canvas,
+                app,
+                player_index,
+                rect,
+                &format!("{marker}{name} [{controls}]"),
             );
-            x += unicode_width::UnicodeWidthStr::width(entry.as_str()) as u16;
         }
     }
     let log_y = hand_y + 6;
@@ -523,9 +585,40 @@ fn render_game(canvas: &mut Canvas, app: &App, images: bool) {
     canvas.centered_text(canvas.height - 2, &footer, Style::fg(UiColor::Cyan));
     canvas.centered_text(
         canvas.height - 1,
-        app.language.text(Message::GameUtilitiesHint),
+        app.language.game_hint(app.setup.mode),
         Style::fg(UiColor::Gray),
     );
+}
+
+fn render_hand_panel(canvas: &mut Canvas, app: &App, player_index: usize, rect: Rect, title: &str) {
+    canvas.border(rect, title);
+    let hand = app.human_hand(player_index).unwrap_or_default();
+    let rows = wrap_hand(
+        app.language,
+        hand,
+        rect.width.saturating_sub(2).max(1) as usize,
+    );
+    let selected_row = rows
+        .iter()
+        .position(|row| {
+            row.iter()
+                .any(|(index, _)| *index == app.selected_cards[player_index])
+        })
+        .unwrap_or(0);
+    let first_row = selected_row.saturating_sub(3);
+    for (row_index, row) in rows.into_iter().skip(first_row).take(4).enumerate() {
+        let mut x = rect.x + 1;
+        for (index, entry) in row {
+            canvas.text(
+                x,
+                rect.y + 1 + row_index as u16,
+                &entry,
+                Style::fg(hand[index].color.map_or(UiColor::Magenta, color))
+                    .selected(index == app.selected_cards[player_index]),
+            );
+            x += UnicodeWidthStr::width(entry.as_str()) as u16;
+        }
+    }
 }
 
 fn render_overlay(canvas: &mut Canvas, title: &str, body: &str) {
@@ -546,6 +639,30 @@ fn render_overlay(canvas: &mut Canvas, title: &str, body: &str) {
         );
     }
     *canvas = next;
+}
+
+fn render_compact_overlay(canvas: &mut Canvas, title: &str, body: &str) {
+    let body_width = body.lines().map(UnicodeWidthStr::width).max().unwrap_or(0);
+    let width = (body_width + 6)
+        .max(UnicodeWidthStr::width(title) + 4)
+        .min(usize::from(canvas.width)) as u16;
+    let height = body.lines().count() as u16 + 3;
+    let rect = Rect {
+        x: canvas.width.saturating_sub(width) / 2,
+        y: 4,
+        width,
+        height,
+    };
+    canvas.clear(rect);
+    canvas.border(rect, title);
+    for (index, line) in body.lines().enumerate() {
+        canvas.text(
+            rect.x + 3,
+            rect.y + 2 + index as u16,
+            line,
+            Style::default(),
+        );
+    }
 }
 
 fn render_result(canvas: &mut Canvas, app: &App) {
@@ -573,6 +690,7 @@ fn render_result(canvas: &mut Canvas, app: &App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::PendingWild;
     use crate::frontend::{FallbackReason, GraphicsChoice};
     use crate::i18n::Language;
 
@@ -616,5 +734,80 @@ mod tests {
         let help = render(&app, GraphicsBackend::Sixel, viewport);
         assert!(help.images.is_empty());
         assert!(help.plain_text().contains("Shortcuts"));
+    }
+
+    #[test]
+    fn dual_mode_renders_both_hands_and_current_preview() {
+        let mut app = App::with_graphics(Language::English, GraphicsChoice::GraphicsBeta);
+        app.setup.mode = PlayMode::Dual;
+        app.setup.bot_count = 0;
+        app.setup.names = ["Left".to_owned(), "Right".to_owned()];
+        app.start_match().unwrap();
+        let game = render(
+            &app,
+            GraphicsBackend::Sixel,
+            Viewport {
+                columns: 70,
+                rows: 26,
+            },
+        );
+        let text = game.plain_text();
+
+        assert!(text.contains("*Left [WASD]"));
+        assert!(text.contains("Right [hjkl/Arrows]"));
+        assert!(text.contains("Enter play · X draw · P pass"));
+        assert_eq!(game.images.len(), 2);
+    }
+
+    #[test]
+    fn compact_color_picker_preserves_the_hand_and_game_details() {
+        let mut app = App::with_graphics(Language::English, GraphicsChoice::GraphicsBeta);
+        app.setup.bot_count = 1;
+        app.start_match().unwrap();
+        app.pending_wild = Some(PendingWild {
+            player_index: 0,
+            card: Card::wild(crate::core::Rank::Wild),
+        });
+        let picker = render(
+            &app,
+            GraphicsBackend::Sixel,
+            Viewport {
+                columns: 70,
+                rows: 26,
+            },
+        );
+        let text = picker.plain_text();
+
+        assert!(picker.images.is_empty());
+        assert!(text.contains("Choose a color"));
+        assert!(text.contains("[RED]  YELLOW  GREEN  BLUE"));
+        assert!(text.contains("Your hand"));
+        assert!(text.contains("Events"));
+        assert!(text.contains("? help · Q quit"));
+    }
+
+    #[test]
+    fn compact_color_picker_fits_chinese_at_minimum_size() {
+        let mut app = App::with_graphics(Language::Chinese, GraphicsChoice::Text);
+        app.setup.bot_count = 1;
+        app.start_match().unwrap();
+        app.pending_wild = Some(PendingWild {
+            player_index: 0,
+            card: Card::wild(crate::core::Rank::Wild),
+        });
+        let picker = render(
+            &app,
+            GraphicsBackend::Text(FallbackReason::Manual),
+            Viewport {
+                columns: 70,
+                rows: 26,
+            },
+        )
+        .plain_text();
+
+        assert!(picker.contains("选择颜色"));
+        assert!(picker.contains("[红]  黄  绿  蓝"));
+        assert!(picker.contains("你的手牌"));
+        assert!(picker.contains("事件"));
     }
 }
