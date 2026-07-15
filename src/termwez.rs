@@ -8,6 +8,9 @@ use std::time::Duration;
 use termwiz::caps::{Capabilities, ProbeHints};
 use termwiz::cell::{AttributeChange, Intensity};
 use termwiz::color::ColorAttribute;
+use termwiz::escape::osc::{
+    ITermDimension, ITermFileData, ITermProprietary, OperatingSystemCommand,
+};
 use termwiz::image::{ImageData, ImageDataType, TextureCoordinate};
 use termwiz::input::{InputEvent, KeyCode as TwKeyCode, Modifiers};
 #[cfg(test)]
@@ -98,8 +101,11 @@ fn run_loop<T: Terminal>(
                     changes
                 }
             };
+            let changes = stable_terminal_changes(&changes).map_err(|error| error.to_string())?;
             // Surface full repaint cannot reconstruct Change::Image. Render
             // the original changes through the VT-capable Termwiz terminal.
+            // The typed OSC conversion prevents the first image from moving
+            // the cursor and offsetting later image placements.
             terminal
                 .terminal()
                 .render(&changes)
@@ -198,6 +204,36 @@ fn canvas_changes(
         }));
     }
     Ok(changes)
+}
+
+fn stable_terminal_changes(changes: &[Change]) -> termwiz::Result<Vec<Change>> {
+    changes
+        .iter()
+        .map(|change| match change {
+            Change::Image(image) => {
+                let data = match &*image.image.data() {
+                    ImageDataType::EncodedFile(data) => data.to_vec(),
+                    _ => {
+                        termwiz::bail!("Termwiz frontend requires encoded image data");
+                    }
+                };
+                let osc = OperatingSystemCommand::ITermProprietary(ITermProprietary::File(
+                    Box::new(ITermFileData {
+                        name: None,
+                        size: Some(data.len()),
+                        width: ITermDimension::Cells(image.width as i64),
+                        height: ITermDimension::Cells(image.height as i64),
+                        preserve_aspect_ratio: true,
+                        inline: true,
+                        do_not_move_cursor: true,
+                        data,
+                    }),
+                ));
+                Ok(Change::Text(osc.to_string()))
+            }
+            _ => Ok(change.clone()),
+        })
+        .collect()
 }
 
 fn add_style(changes: &mut Vec<Change>, style: Style) {
@@ -316,6 +352,19 @@ mod tests {
                 .count(),
             2
         );
+        let terminal_changes = stable_terminal_changes(&changes).unwrap();
+        assert!(
+            !terminal_changes
+                .iter()
+                .any(|change| matches!(change, Change::Image(_)))
+        );
+        assert_eq!(
+            terminal_changes
+                .iter()
+                .filter(|change| matches!(change, Change::Text(text) if text.contains("doNotMoveCursor=1")))
+                .count(),
+            2
+        );
         let mut surface = Surface::new(80, 28);
         surface.add_changes(changes);
         let image_cells = surface
@@ -330,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn original_change_stream_reaches_termwiz_image_renderer() {
+    fn stable_change_stream_reaches_termwiz_image_renderer() {
         let card = Card::new(crate::core::Color::Blue, crate::core::Rank::Number(7));
         let canvas = Canvas {
             width: 1,
@@ -348,12 +397,14 @@ mod tests {
             }],
         };
         let changes = canvas_changes(&canvas, &mut HashMap::new()).unwrap();
+        let changes = stable_terminal_changes(&changes).unwrap();
         let caps = wezterm_capabilities().unwrap();
         let mut renderer = TerminfoRenderer::new(caps);
         let mut output = TestTty::default();
         renderer.render_to(&changes, &mut output).unwrap();
         let rendered = String::from_utf8(output.0).unwrap();
         assert!(rendered.contains("\u{1b}]1337;File="));
+        assert!(rendered.contains("doNotMoveCursor=1"));
     }
 
     #[test]
