@@ -8,11 +8,19 @@ The system SHALL calculate a fitted terminal-image size from the card art, detec
 - **THEN** each fitted, centered rectangle is wholly contained in its own panel and differs from perfect centering by no more than one terminal cell
 
 ### Requirement: Anchored local WezTerm output
-The system SHALL wrap local, non-tmux WezTerm iTerm2 image data with one-based absolute cursor positions that anchor upstream clearing and image output at the final rectangle and leave the cursor at the next cell Ratatui accounts for.
+The system SHALL keep local, non-tmux WezTerm iTerm2 image data out of Ratatui cells, clear changed old rectangles before the normal UI draw, and emit changed images afterward with one-based absolute cursor positions while preserving the terminal cursor.
 
 #### Scenario: Render a WezTerm card preview
 - **WHEN** a card is encoded for a final rectangle in a local WezTerm session outside tmux
-- **THEN** its data positions the cursor at the rectangle top-left before the unchanged upstream clear/image sequence and positions it at the next Ratatui cell afterward
+- **THEN** the output positions the cursor at the rectangle top-left immediately before the image OSC and restores the saved cursor after the batch
+
+#### Scenario: Preview remains unchanged
+- **WHEN** a card and its final rectangle match the emitted placement from the previous frame
+- **THEN** the frame emits no clearing or image data for that slot
+
+#### Scenario: Preview changes or disappears
+- **WHEN** a card, origin, dimensions, or visibility changes
+- **THEN** every row of the old rectangle is cleared by absolute CUP plus ECH before Ratatui draws, and a visible replacement is emitted at its new rectangle afterward
 
 #### Scenario: Render independent preview slots
 - **WHEN** the selected-card and discard-top slots display cards at different rectangles, including the same logical card

@@ -12,7 +12,7 @@ mod ui;
 mod uninstall;
 
 use std::env;
-use std::io::{self, stdout};
+use std::io::{self, Write, stdout};
 use std::time::Duration;
 
 use app::App;
@@ -22,7 +22,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use graphics::GraphicsRuntime;
+use graphics::{GraphicsRuntime, WeztermPreparation};
 use i18n::Language;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -89,8 +89,29 @@ fn run_tui() -> io::Result<()> {
     let mut app = App::with_graphics(Language::detect(), graphics.default_choice());
 
     while !app.should_exit {
-        // UI 读取应用状态，并通过可变图形运行时按需创建或释放预览协议。
-        terminal.draw(|frame| ui::render(frame, &app, &mut graphics))?;
+        // UI 在任何输出前唯一确定最终图片矩形；WezTerm 还会先原子编码两槽。
+        let area = terminal.size()?;
+        let mut plan = ui::preview_plan(&app, area.into(), &mut graphics);
+        if graphics.uses_wezterm_placement() {
+            let preparation =
+                graphics.prepare_wezterm_frame(plan.terminal_size, plan.selected, plan.discard);
+            let (frame_update, fell_back) = match preparation {
+                WeztermPreparation::Ready(update) => (update, false),
+                WeztermPreparation::Fallback(update) => (update, true),
+            };
+            if fell_back {
+                plan = ui::preview_plan(&app, area.into(), &mut graphics);
+            }
+            if frame_update.clear_terminal {
+                terminal.clear()?;
+            }
+            write_terminal_bytes(&mut terminal, &frame_update.before_draw)?;
+            terminal.draw(|frame| ui::render(frame, &app, &mut graphics, plan))?;
+            write_terminal_bytes(&mut terminal, &frame_update.after_draw)?;
+            graphics.commit_wezterm_frame(frame_update, plan.terminal_size);
+        } else {
+            terminal.draw(|frame| ui::render(frame, &app, &mut graphics, plan))?;
+        }
         // 短轮询让键盘输入保持响应，同时保证没有输入时 AI 计时器仍会推进。
         if event::poll(Duration::from_millis(50))?
             && let Event::Key(key) = event::read()?
@@ -105,6 +126,17 @@ fn run_tui() -> io::Result<()> {
     terminal.clear()?;
     terminal.show_cursor()?;
     Ok(())
+}
+
+fn write_terminal_bytes<W: Write>(
+    terminal: &mut Terminal<CrosstermBackend<W>>,
+    bytes: &[u8],
+) -> io::Result<()> {
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    terminal.backend_mut().write_all(bytes)?;
+    terminal.backend_mut().flush()
 }
 
 fn install_panic_restore() {

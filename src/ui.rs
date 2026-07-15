@@ -6,14 +6,14 @@
 
 use crate::core::{Action, Color};
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Direction as LayoutDirection, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction as LayoutDirection, Layout, Rect, Size};
 use ratatui::style::{Color as TuiColor, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui_image::Image;
 
 use crate::app::{App, Screen};
-use crate::graphics::{GraphicsRuntime, PreviewSlot};
+use crate::graphics::{GraphicsRuntime, PreviewPlacement, PreviewSlot};
 use crate::i18n::Message;
 
 /// 完整界面能够正常布局的最小终端宽度。
@@ -34,7 +34,77 @@ const FIXED_GAME_HEIGHT: u16 = 14;
 ///
 /// 先绘制设置页或牌桌主体，再叠加帮助、结算、退出确认和选色窗口。
 /// 当图像不应显示时会同步释放预览协议，避免终端残留上一帧的图像。
-pub fn render(frame: &mut Frame<'_>, app: &App, graphics: &mut GraphicsRuntime) {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// 在 `Terminal::draw` 前唯一确定的一帧图片布局计划。
+pub struct PreviewPlan {
+    pub terminal_size: Size,
+    pub screen: Screen,
+    pub images_visible: bool,
+    pub application_wezterm: bool,
+    pub selected: Option<PreviewPlacement>,
+    pub discard: Option<PreviewPlacement>,
+}
+
+/// 根据应用状态、终端尺寸和拟合结果，在任何终端输出前生成最终目标矩形。
+pub fn preview_plan(app: &App, area: Rect, graphics: &mut GraphicsRuntime) -> PreviewPlan {
+    let application_wezterm = graphics.uses_wezterm_placement();
+    let mut plan = PreviewPlan {
+        terminal_size: area.as_size(),
+        screen: app.screen,
+        images_visible: false,
+        application_wezterm,
+        selected: None,
+        discard: None,
+    };
+    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+        return plan;
+    }
+    let images_visible = should_render_images(
+        area,
+        app.game.is_some(),
+        app.screen,
+        app.pending_wild.is_some(),
+        graphics.effective_backend(app.setup.graphics),
+    );
+    if !images_visible {
+        return plan;
+    }
+
+    let game = app.game.as_ref().expect("visible previews require game");
+    let state = game.public_state();
+    let rows = game_rows(app, area, true);
+    let columns = Layout::default()
+        .direction(LayoutDirection::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(rows[2]);
+    let panels = [
+        carnival_block("").inner(columns[0]),
+        carnival_block("").inner(columns[1]),
+    ];
+    let selected_card = app
+        .human_hand()
+        .and_then(|hand| hand.get(app.selected_card))
+        .copied();
+    let make_placement = |graphics: &mut GraphicsRuntime, card, panel: Rect| {
+        graphics
+            .fit_size(card, panel.as_size())
+            .map(|size| PreviewPlacement {
+                card,
+                rect: centered_image_area(panel, size),
+            })
+    };
+    let selected = selected_card.and_then(|card| make_placement(graphics, card, panels[0]));
+    let discard = make_placement(graphics, state.discard_top, panels[1]);
+    if discard.is_none() || (selected_card.is_some() && selected.is_none()) {
+        return plan;
+    }
+    plan.images_visible = true;
+    plan.selected = selected;
+    plan.discard = discard;
+    plan
+}
+
+pub fn render(frame: &mut Frame<'_>, app: &App, graphics: &mut GraphicsRuntime, plan: PreviewPlan) {
     let area = frame.area();
     // 尺寸不足时不再尝试压缩各分区，因为这样会让 Ratatui 区域重叠；
     // 仅保留明确的调整窗口提示，同时清除可能残留的图像。
@@ -51,13 +121,9 @@ pub fn render(frame: &mut Frame<'_>, app: &App, graphics: &mut GraphicsRuntime) 
     }
 
     // 是否显示图像既取决于终端能力，也取决于当前页面是否允许图像覆盖。
-    let images_visible = should_render_images(
-        area,
-        app.game.is_some(),
-        app.screen,
-        app.pending_wild.is_some(),
-        graphics.effective_backend(app.setup.graphics),
-    );
+    debug_assert_eq!(plan.terminal_size, area.as_size());
+    debug_assert_eq!(plan.screen, app.screen);
+    let images_visible = plan.images_visible;
     if !images_visible {
         graphics.suspend();
     }
@@ -65,7 +131,7 @@ pub fn render(frame: &mut Frame<'_>, app: &App, graphics: &mut GraphicsRuntime) 
     // game 是否存在代表已经创建对局；帮助、退出和结算仍以牌桌为背景，
     // 因此主体选择不直接依赖 screen。
     if app.game.is_some() {
-        render_game(frame, app, area, graphics, images_visible);
+        render_game(frame, app, area, graphics, plan);
     } else {
         render_setup(frame, app, area, graphics);
     }
@@ -253,8 +319,9 @@ fn render_game(
     app: &App,
     area: Rect,
     graphics: &mut GraphicsRuntime,
-    images_visible: bool,
+    plan: PreviewPlan,
 ) {
+    let images_visible = plan.images_visible;
     let game = app.game.as_ref().expect("game view has game");
     let state = game.public_state();
     // 先计算手牌的真实换行数，再决定手牌区高度和滚动偏移。
@@ -265,19 +332,7 @@ fn render_game(
         area.width.saturating_sub(2) as usize,
     );
     // 图像牌面需要额外高度；手牌可用剩余空间增长，但必须给事件日志留位。
-    let table_height = if images_visible { 9 } else { 5 };
-    let hand_height = hand_height(hand_lines.len(), area.height, images_visible);
-    let rows = Layout::default()
-        .direction(LayoutDirection::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(table_height),
-            Constraint::Length(hand_height),
-            Constraint::Min(MIN_LOG_HEIGHT),
-            Constraint::Length(3),
-        ])
-        .split(area);
+    let rows = game_rows(app, area, images_visible);
 
     let current_name = state
         .players
@@ -329,7 +384,7 @@ fn render_game(
     );
 
     if images_visible {
-        render_image_table(frame, app, &state, rows[2], graphics);
+        render_image_table(frame, app, &state, rows[2], graphics, plan);
     } else {
         render_text_table(frame, app, &state, rows[2]);
     }
@@ -377,6 +432,31 @@ fn render_game(
             })),
         rows[5],
     );
+}
+
+/// 预览计划和实际 UI 共用的游戏页纵向布局。
+fn game_rows(app: &App, area: Rect, images_visible: bool) -> std::rc::Rc<[Rect]> {
+    let line_count = hand_lines(
+        app.language,
+        app.human_hand().unwrap_or_default(),
+        app.selected_card,
+        area.width.saturating_sub(2) as usize,
+    )
+    .0
+    .len();
+    let table_height = if images_visible { 9 } else { 5 };
+    let hand_height = hand_height(line_count, area.height, images_visible);
+    Layout::default()
+        .direction(LayoutDirection::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(table_height),
+            Constraint::Length(hand_height),
+            Constraint::Min(MIN_LOG_HEIGHT),
+            Constraint::Length(3),
+        ])
+        .split(area)
 }
 
 /// 将手牌转换成可渲染文本行，并返回选中牌所在的行号。
@@ -564,6 +644,7 @@ fn render_image_table(
     state: &crate::core::PublicGameState,
     area: Rect,
     graphics: &mut GraphicsRuntime,
+    plan: PreviewPlan,
 ) {
     // 两个槽位拥有独立边框和协议缓存。使用百分比可让奇数宽度的余量由
     // Ratatui 稳定分配，而不在这里重复处理坐标取整。
@@ -598,6 +679,7 @@ fn render_image_table(
             card,
             selected_inner,
             app,
+            plan,
         );
     } else {
         // 手牌为空时立即清除对应协议，不能让上一次选中的牌继续留在终端。
@@ -625,6 +707,7 @@ fn render_image_table(
         state.discard_top,
         discard_inner,
         app,
+        plan,
     );
 }
 
@@ -636,12 +719,24 @@ fn render_card_preview(
     card: crate::core::Card,
     area: Rect,
     app: &App,
+    plan: PreviewPlan,
 ) {
-    let available = ratatui::layout::Size::new(area.width, area.height);
-    if let Some(image_size) = graphics.fit_size(card, available) {
-        let image_area = centered_image_area(area, image_size);
-        if let Some(protocol) = graphics.protocol(slot, card, image_area) {
-            frame.render_widget(Image::new(protocol), image_area);
+    let placement = match slot {
+        PreviewSlot::Selected => plan.selected,
+        PreviewSlot::Discard => plan.discard,
+    };
+    if let Some(placement) = placement {
+        debug_assert_eq!(placement.card, card);
+        debug_assert!(placement.rect.x >= area.x && placement.rect.y >= area.y);
+        debug_assert!(placement.rect.right() <= area.right());
+        debug_assert!(placement.rect.bottom() <= area.bottom());
+        if plan.application_wezterm {
+            // WezTerm 图片在 Ratatui flush 后单独输出；这里只清空并保留同一目标矩形。
+            frame.render_widget(Clear, placement.rect);
+            return;
+        }
+        if let Some(protocol) = graphics.protocol(slot, card, placement.rect) {
+            frame.render_widget(Image::new(protocol), placement.rect);
             return;
         }
     }
@@ -878,8 +973,18 @@ mod tests {
 
     fn draw_text(terminal: &mut Terminal<TestBackend>, app: &App) {
         let mut graphics = GraphicsRuntime::text_for_tests();
+        draw_with_graphics(terminal, app, &mut graphics);
+    }
+
+    fn draw_with_graphics(
+        terminal: &mut Terminal<TestBackend>,
+        app: &App,
+        graphics: &mut GraphicsRuntime,
+    ) {
+        let area: Rect = terminal.size().unwrap().into();
+        let plan = preview_plan(app, area, graphics);
         terminal
-            .draw(|frame| render(frame, app, &mut graphics))
+            .draw(|frame| render(frame, app, graphics, plan))
             .unwrap();
     }
 
@@ -953,9 +1058,7 @@ mod tests {
         );
         let mut graphics = GraphicsRuntime::with_protocol_for_tests(ProtocolType::Sixel);
 
-        terminal
-            .draw(|frame| render(frame, &app, &mut graphics))
-            .unwrap();
+        draw_with_graphics(&mut terminal, &app, &mut graphics);
 
         assert!(contents(&terminal).contains("Graphics: Graphics (Beta) (Sixel)"));
     }
@@ -1008,38 +1111,28 @@ mod tests {
         app.start_match().unwrap();
         let mut graphics = GraphicsRuntime::with_protocol_for_tests(ProtocolType::Iterm2);
 
-        terminal
-            .draw(|frame| render(frame, &app, &mut graphics))
-            .unwrap();
+        draw_with_graphics(&mut terminal, &app, &mut graphics);
         assert_eq!(graphics.cached_preview_count(), 0);
         assert!(contents(&terminal).contains("Table"));
 
         terminal.backend_mut().resize(100, 28);
-        terminal
-            .draw(|frame| render(frame, &app, &mut graphics))
-            .unwrap();
+        draw_with_graphics(&mut terminal, &app, &mut graphics);
         assert_eq!(graphics.cached_preview_count(), 2);
         let screen = contents(&terminal);
         assert!(screen.contains("Selected"));
         assert!(screen.contains("Discard"));
 
         terminal.backend_mut().resize(50, 10);
-        terminal
-            .draw(|frame| render(frame, &app, &mut graphics))
-            .unwrap();
+        draw_with_graphics(&mut terminal, &app, &mut graphics);
         assert_eq!(graphics.cached_preview_count(), 0);
         assert!(contents(&terminal).contains("Terminal too small"));
 
         terminal.backend_mut().resize(100, 28);
-        terminal
-            .draw(|frame| render(frame, &app, &mut graphics))
-            .unwrap();
+        draw_with_graphics(&mut terminal, &app, &mut graphics);
         assert_eq!(graphics.cached_preview_count(), 2);
 
         app.screen = Screen::Help;
-        terminal
-            .draw(|frame| render(frame, &app, &mut graphics))
-            .unwrap();
+        draw_with_graphics(&mut terminal, &app, &mut graphics);
         assert_eq!(graphics.cached_preview_count(), 0);
         assert!(contents(&terminal).contains("Help"));
     }
@@ -1087,6 +1180,53 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_ne!(image_rects[0].x, image_rects[1].x);
+    }
+
+    #[test]
+    fn preview_plan_centers_both_slots_at_minimum_and_large_wezterm_sizes() {
+        use ratatui_image::picker::ProtocolType;
+
+        let mut app = App::with_graphics(
+            Language::English,
+            crate::graphics::GraphicsChoice::GraphicsBeta,
+        );
+        app.setup.bot_count = 1;
+        app.start_match().unwrap();
+        let mut graphics = GraphicsRuntime::with_protocol_for_tests(ProtocolType::Iterm2);
+
+        for area in [Rect::new(0, 0, 70, 26), Rect::new(0, 0, 159, 41)] {
+            let plan = preview_plan(&app, area, &mut graphics);
+            assert!(plan.images_visible);
+            let rows = game_rows(&app, area, true);
+            let columns = Layout::default()
+                .direction(LayoutDirection::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(rows[2]);
+            let panels = [
+                carnival_block("").inner(columns[0]),
+                carnival_block("").inner(columns[1]),
+            ];
+            for (placement, panel) in [plan.selected.unwrap(), plan.discard.unwrap()]
+                .into_iter()
+                .zip(panels)
+            {
+                let rect = placement.rect;
+                assert!(rect.x >= panel.x && rect.y >= panel.y);
+                assert!(rect.right() <= panel.right() && rect.bottom() <= panel.bottom());
+                assert!(
+                    rect.x
+                        .abs_diff(panel.x)
+                        .abs_diff(panel.right() - rect.right())
+                        <= 1
+                );
+                assert!(
+                    rect.y
+                        .abs_diff(panel.y)
+                        .abs_diff(panel.bottom() - rect.bottom())
+                        <= 1
+                );
+            }
+        }
     }
 
     #[test]

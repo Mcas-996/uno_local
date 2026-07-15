@@ -20,3 +20,11 @@
 
 - [x] 4.1 Run `cargo fmt --check`, `cargo check`, `cargo test`, and strict Clippy with all warnings denied
 - [x] 4.2 Verify the working tree keeps `Cargo.toml` on crates.io and records no change to `docs/extra_info.md`
+
+## 5. Application-controlled WezTerm lifecycle
+
+- [x] 5.1 Build `PreviewPlan` before `Terminal::draw` and share its final rectangles between UI reservation and output
+- [x] 5.2 Atomically encode both WezTerm slots, clear changed old rectangles before Ratatui, and emit changed images afterward
+- [x] 5.3 Preserve unchanged slots, independently handle replacement/movement/deletion, and full-clear on resize
+- [x] 5.4 Clear on overlays, text mode, undersized terminals, fallback, and exit without partial output
+- [x] 5.5 Cover lifecycle diffs, absolute CUP/ECH ordering, atomic failure, and 70x26/159x41 centering with automated tests

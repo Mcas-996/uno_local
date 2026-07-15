@@ -34,17 +34,17 @@ Encoding first and rewriting the rectangle afterward was rejected because it rec
 
 Each selected/discard slot will retain its independent cache, but `ProtocolKey` will contain `(Card, Rect)` instead of `(Card, Size)`. The rectangle dimensions feed upstream encoding and the origin feeds the WezTerm cursor wrapper. Identical rectangles reuse the encoding; any origin or dimension change rebuilds it. Separate slots remain necessary even when both display the same card.
 
-### Wrap only recognizable local WezTerm iTerm2 data
+### Emit recognizable local WezTerm iTerm2 data outside Ratatui
 
-The runtime will retain terminal-environment information from detection. After upstream encoding, it will alter data only when all of these are true: the session is WezTerm, the protocol variant is iTerm2, and the upstream protocol says it is not using tmux passthrough.
+The runtime retains terminal-environment information from detection. Local non-tmux WezTerm uses an application-controlled path; ordinary iTerm2, tmux, Sixel, and Kitty continue to use the upstream Ratatui widget path.
 
-The wrapper will verify the exact upstream clear-area prefix for the encoded dimensions and the expected iTerm2 image introducer. It then prepends a one-based absolute cursor position for the rectangle's top-left and appends a one-based absolute position for the next cell Ratatui accounts for after the string-bearing cell. Upstream clearing and image bytes remain unchanged.
+Before `Terminal::draw`, the UI creates one `PreviewPlan` containing page state, terminal size, cards, and final zero-based rectangles. The graphics runtime encodes every changed desired slot before any output and verifies the upstream iTerm2 clear prefix and image framing. It stores only the image OSC for application output. A batch then clears every changed old rectangle with absolute CUP plus ECH, Ratatui draws the normal UI and reserved panel backgrounds, and a final batch places each changed image using an absolute CUP immediately followed by its OSC. Both batches save and restore the cursor.
 
-Saving/restoring the terminal cursor was rejected because Ratatui expects output to advance by one cell, not return to the pre-write cursor. Relative movement was rejected because the bug is caused by an unreliable starting cursor.
+Each slot stores card, rectangle, encoded image, and emitted state. Unchanged slots produce no image output; replacement, movement, deletion, overlay, text mode, and undersized pages clear only affected old placements. A terminal-size change performs one full clear and redraws visible placements. Relative movement remains rejected because the bug is caused by an unreliable starting cursor.
 
 ### Treat unsafe wrapping as an encoding failure
 
-If a WezTerm protocol has an unexpected variant, tmux state, clear sequence, or iTerm2 framing that requires wrapping but cannot be verified, the runtime will switch to `Text(Encoding)`, drop the picker, and clear both preview caches. It will not emit unanchored image data or retry each frame. This reuses the existing stable-degradation behavior.
+If either required WezTerm slot has an unexpected variant, tmux state, clear sequence, or iTerm2 framing, the runtime switches to `Text(Encoding)`, drops the picker, clears every emitted placement, and sends no new image from that frame. It does not retry each frame.
 
 ### Keep an inactive upstream fallback snapshot
 

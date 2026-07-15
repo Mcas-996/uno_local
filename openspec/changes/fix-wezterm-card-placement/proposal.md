@@ -5,8 +5,8 @@ WezTerm accepts the generated iTerm2 card images but renders them relative to wh
 ## What Changes
 
 - Make terminal-image sizing a separate graphics-runtime operation so the UI can decide the final centered rectangle before requesting protocol data.
-- Anchor local, non-tmux WezTerm iTerm2 output to that final rectangle and restore the cursor to Ratatui's expected next cell after output.
-- Key each preview protocol cache by card and final rectangle, and fail safely to text when WezTerm data cannot be wrapped without violating the cursor contract.
+- Give local, non-tmux WezTerm iTerm2 output an application-controlled placement lifecycle outside Ratatui's cell buffer: clear changed old rectangles before the UI draw and emit changed images at absolute coordinates afterward.
+- Key each independent preview placement by card and final rectangle, emit nothing for unchanged frames, and fail atomically to text if either slot cannot be encoded safely.
 - Preserve the existing behavior for tmux, ordinary iTerm2 terminals, Sixel, Kitty, and text mode.
 - Store an unmodified `ratatui-image` v11.0.6 source snapshot under `external/ratatui-image/` as an inactive emergency fallback and document its provenance and activation procedure.
 
