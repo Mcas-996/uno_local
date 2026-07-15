@@ -12,6 +12,8 @@
 https://github.com/user-attachments/assets/37a3b0e1-1527-4067-b81b-d49c915f5e90
 
 ## Quick Start
+### If you dont have [wezterm](https://wezterm.org/)
+You had better download it from [wezterm_download_page](https://wezterm.org/installation.html)
 
 ### macOS / Linux
 
