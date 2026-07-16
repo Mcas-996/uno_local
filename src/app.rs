@@ -414,10 +414,13 @@ impl App {
             KeyCode::Char('s') => Some((0, KeyCode::Down)),
             KeyCode::Char('a') => Some((0, KeyCode::Left)),
             KeyCode::Char('d') => Some((0, KeyCode::Right)),
-            KeyCode::Char('k') | KeyCode::Up => Some((1, KeyCode::Up)),
-            KeyCode::Char('j') | KeyCode::Down => Some((1, KeyCode::Down)),
-            KeyCode::Char('h') | KeyCode::Left => Some((1, KeyCode::Left)),
-            KeyCode::Char('l') | KeyCode::Right => Some((1, KeyCode::Right)),
+            KeyCode::Char('k') => Some((1, KeyCode::Up)),
+            KeyCode::Char('j') => Some((1, KeyCode::Down)),
+            KeyCode::Char('h') => Some((1, KeyCode::Left)),
+            KeyCode::Char('l') => Some((1, KeyCode::Right)),
+            code @ (KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right) => self
+                .current_human_index()
+                .map(|player_index| (player_index, code)),
             _ => None,
         }
     }
@@ -1272,7 +1275,7 @@ mod tests {
     }
 
     #[test]
-    fn dual_mode_allows_inactive_player_preselection() {
+    fn dual_mode_arrows_follow_the_current_player_and_fixed_keys_allow_preselection() {
         let mut app = App::new(Language::English);
         app.setup.mode = PlayMode::Dual;
         app.setup.bot_count = 0;
@@ -1280,8 +1283,55 @@ mod tests {
         assert_eq!(app.current_human_index(), Some(0));
 
         app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), 80);
-        assert_eq!(app.selected_cards[1], 1);
+        assert_eq!(app.selected_cards, [1, 0]);
+        app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE), 80);
+        assert_eq!(app.selected_cards, [1, 1]);
         assert_eq!(app.current_human_index(), Some(0));
+
+        let right = app.human_ids[1].clone();
+        let right_hand = app
+            .game
+            .as_ref()
+            .unwrap()
+            .hand_for(&right)
+            .unwrap()
+            .to_vec();
+        app.game.as_mut().unwrap().set_test_turn(
+            &right,
+            right_hand,
+            Card::new(Color::Red, Rank::Number(5)),
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), 80);
+        assert_eq!(app.selected_cards, [1, 2]);
+    }
+
+    #[test]
+    fn dual_mode_arrows_do_nothing_during_an_ai_turn() {
+        let mut app = App::new(Language::English);
+        app.setup.mode = PlayMode::Dual;
+        app.setup.bot_count = 1;
+        app.start_match().unwrap();
+        app.selected_cards = [1, 1];
+
+        let bot = app
+            .game
+            .as_ref()
+            .unwrap()
+            .public_state()
+            .players
+            .into_iter()
+            .find(|player| !app.is_human(&player.id))
+            .unwrap()
+            .id;
+        let bot_hand = app.game.as_ref().unwrap().hand_for(&bot).unwrap().to_vec();
+        app.game.as_mut().unwrap().set_test_turn(
+            &bot,
+            bot_hand,
+            Card::new(Color::Red, Rank::Number(5)),
+        );
+
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), 80);
+        assert_eq!(app.selected_cards, [1, 1]);
     }
 
     #[test]
@@ -1302,6 +1352,8 @@ mod tests {
         assert_eq!(app.selected_color, 0);
         app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE), 80);
         assert_eq!(app.selected_color, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), 80);
+        assert_eq!(app.selected_color, 0);
     }
 
     #[test]

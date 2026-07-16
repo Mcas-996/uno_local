@@ -561,7 +561,8 @@ fn render_game(canvas: &mut Canvas, app: &App, images: bool) {
         );
     } else {
         let half = canvas.width / 2;
-        for (player_index, rect, controls) in [
+        let arrow_player = app.current_human_index();
+        for (player_index, rect, fixed_controls) in [
             (
                 0,
                 Rect {
@@ -580,7 +581,7 @@ fn render_game(canvas: &mut Canvas, app: &App, images: bool) {
                     width: canvas.width.saturating_sub(half + 1),
                     height: 6,
                 },
-                "hjkl/Arrows",
+                "hjkl",
             ),
         ] {
             let name = state
@@ -592,6 +593,11 @@ fn render_game(canvas: &mut Canvas, app: &App, images: bool) {
                 "*"
             } else {
                 ""
+            };
+            let controls = if arrow_player == Some(player_index) {
+                format!("{fixed_controls}/Arrows")
+            } else {
+                fixed_controls.to_owned()
             };
             render_hand_panel(
                 canvas,
@@ -800,10 +806,35 @@ mod tests {
         );
         let text = game.plain_text();
 
-        assert!(text.contains("*Left [WASD]"));
-        assert!(text.contains("Right [hjkl/Arrows]"));
+        assert!(text.contains("*Left [WASD/Arrows]"));
+        assert!(text.contains("Right [hjkl]"));
         assert!(text.contains("Enter play · X draw · P pass"));
         assert_eq!(game.images.len(), 2);
+
+        let right = app.human_ids[1].clone();
+        let right_hand = app
+            .game
+            .as_ref()
+            .unwrap()
+            .hand_for(&right)
+            .unwrap()
+            .to_vec();
+        app.game.as_mut().unwrap().set_test_turn(
+            &right,
+            right_hand,
+            Card::new(Color::Red, crate::core::Rank::Number(5)),
+        );
+        let game = render(
+            &app,
+            GraphicsBackend::Sixel,
+            Viewport {
+                columns: 70,
+                rows: 26,
+            },
+        );
+        let text = game.plain_text();
+        assert!(text.contains("Left [WASD]"));
+        assert!(text.contains("*Right [hjkl/Arrows]"));
     }
 
     #[test]

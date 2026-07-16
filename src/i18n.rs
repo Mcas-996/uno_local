@@ -127,10 +127,10 @@ impl Language {
             (Self::English, PlayMode::Single) => self.text(Message::HelpBody),
             (Self::Chinese, PlayMode::Single) => self.text(Message::HelpBody),
             (Self::English, PlayMode::Dual) => {
-                "* STAR CARNIVAL *\n\nTwo-player shortcuts\n  Left:  WASD select\n  Right: arrows/hjkl select\n  Enter play   X draw   P pass\n  : command    Q quit\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n  WILD -32: 66+ cards; discard 32, share 12\n  WILD -64: 132+ cards; discard 64, share 24\n\nCommands act for the current player.\nPress ? or Esc to return."
+                "* STAR CARNIVAL *\n\nTwo-player shortcuts\n  Left:    WASD select\n  Right:   hjkl select\n  Current: arrows select\n  Enter play   X draw   P pass\n  : command    Q quit\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n  WILD -32: 66+ cards; discard 32, share 12\n  WILD -64: 132+ cards; discard 64, share 24\n\nCommands act for the current player.\nPress ? or Esc to return."
             }
             (Self::Chinese, PlayMode::Dual) => {
-                "* 星光嘉年华 *\n\n双人快捷键\n  左侧：WASD 选择手牌\n  右侧：方向键/hjkl 选择手牌\n  Enter 出牌  X 摸牌  P 跳过\n  : command    Q 退出\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n  变色 -32：66+ 张；弃 32 张，均分 12 张\n  变色 -64：132+ 张；弃 64 张，均分 24 张\n\n命令作用于当前玩家。\n按 ? 或 Esc 返回。"
+                "* 星光嘉年华 *\n\n双人快捷键\n  左侧：WASD 选择手牌\n  右侧：hjkl 选择手牌\n  当前玩家：方向键选择手牌\n  Enter 出牌  X 摸牌  P 跳过\n  : command    Q 退出\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n  变色 -32：66+ 张；弃 32 张，均分 12 张\n  变色 -64：132+ 张；弃 64 张，均分 24 张\n\n命令作用于当前玩家。\n按 ? 或 Esc 返回。"
             }
         }
     }
