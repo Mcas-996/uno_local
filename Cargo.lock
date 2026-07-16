@@ -1384,7 +1384,7 @@ checksum = "1fc81956842c57dac11422a97c3b8195a1ff727f06e85c84ed2e8aa277c9a0fd"
 
 [[package]]
 name = "uno"
-version = "2.1.1"
+version = "2.1.2"
 dependencies = [
  "crossterm",
  "icy_sixel",
