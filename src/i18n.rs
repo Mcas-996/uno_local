@@ -69,8 +69,8 @@ impl Language {
             ),
             Message::Help => ("Help", "帮助"),
             Message::HelpBody => (
-                "* STAR CARNIVAL *\n\nShortcuts\n  Arrows/hjkl select  Enter play\n  D draw              P pass\n  : command           Q quit\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n\nCommands\n  play <index>  draw  pass\n  help          new   quit\n\nPress ? or Esc to return.",
-                "* 星光嘉年华 *\n\n快捷键\n  方向键/hjkl 选择手牌  Enter 出牌\n  D 摸牌              P 跳过\n  : 输入命令          Q 退出\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n\n命令\n  play <序号>   draw  pass\n  help          new   quit\n\n按 ? 或 Esc 返回。",
+                "* STAR CARNIVAL *\n\nShortcuts\n  Arrows/hjkl select  Enter play\n  D draw              P pass\n  : command           Q quit\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n  WILD -32: 66+ cards; discard 32, share 12\n  WILD -64: 132+ cards; discard 64, share 24\n\nCommands\n  play <index>  draw  pass\n  help          new   quit\n\nPress ? or Esc to return.",
+                "* 星光嘉年华 *\n\n快捷键\n  方向键/hjkl 选择手牌  Enter 出牌\n  D 摸牌              P 跳过\n  : 输入命令          Q 退出\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n  变色 -32：66+ 张；弃 32 张，均分 12 张\n  变色 -64：132+ 张；弃 64 张，均分 24 张\n\n命令\n  play <序号>   draw  pass\n  help          new   quit\n\n按 ? 或 Esc 返回。",
             ),
             Message::QuitTitle => ("Leave match?", "退出对局？"),
             Message::QuitBody => ("Y confirm · N/Esc cancel", "Y 确认 · N/Esc 取消"),
@@ -127,10 +127,10 @@ impl Language {
             (Self::English, PlayMode::Single) => self.text(Message::HelpBody),
             (Self::Chinese, PlayMode::Single) => self.text(Message::HelpBody),
             (Self::English, PlayMode::Dual) => {
-                "* STAR CARNIVAL *\n\nTwo-player shortcuts\n  Left:  WASD select\n  Right: arrows/hjkl select\n  Enter play   X draw   P pass\n  : command    Q quit\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n\nCommands act for the current player.\nPress ? or Esc to return."
+                "* STAR CARNIVAL *\n\nTwo-player shortcuts\n  Left:  WASD select\n  Right: arrows/hjkl select\n  Enter play   X draw   P pass\n  : command    Q quit\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n  WILD -32: 66+ cards; discard 32, share 12\n  WILD -64: 132+ cards; discard 64, share 24\n\nCommands act for the current player.\nPress ? or Esc to return."
             }
             (Self::Chinese, PlayMode::Dual) => {
-                "* 星光嘉年华 *\n\n双人快捷键\n  左侧：WASD 选择手牌\n  右侧：方向键/hjkl 选择手牌\n  Enter 出牌  X 摸牌  P 跳过\n  : command    Q 退出\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n\n命令作用于当前玩家。\n按 ? 或 Esc 返回。"
+                "* 星光嘉年华 *\n\n双人快捷键\n  左侧：WASD 选择手牌\n  右侧：方向键/hjkl 选择手牌\n  Enter 出牌  X 摸牌  P 跳过\n  : command    Q 退出\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n  变色 -32：66+ 张；弃 32 张，均分 12 张\n  变色 -64：132+ 张；弃 64 张，均分 24 张\n\n命令作用于当前玩家。\n按 ? 或 Esc 返回。"
             }
         }
     }
@@ -180,6 +180,17 @@ impl Language {
         }
     }
 
+    pub fn redistribute_log(self, played: &str, discarded: usize, distributed: usize) -> String {
+        match self {
+            Self::English => {
+                format!("{played}, discarded {discarded} cards and distributed {distributed} cards")
+            }
+            Self::Chinese => {
+                format!("{played}，弃置 {discarded} 张牌并向其他玩家均分 {distributed} 张牌")
+            }
+        }
+    }
+
     pub fn difficulty(self, difficulty: Difficulty) -> &'static str {
         self.text(match difficulty {
             Difficulty::Easy => Message::Easy,
@@ -192,9 +203,9 @@ impl Language {
     pub fn deck_variant(self, variant: DeckVariant) -> &'static str {
         match (self, variant) {
             (Self::English, DeckVariant::Standard) => "Standard 112",
-            (Self::English, DeckVariant::Holiday) => "Holiday 122",
+            (Self::English, DeckVariant::Holiday) => "Holiday 126",
             (Self::Chinese, DeckVariant::Standard) => "标准 112",
-            (Self::Chinese, DeckVariant::Holiday) => "节日 122",
+            (Self::Chinese, DeckVariant::Holiday) => "节日 126",
         }
     }
 
@@ -262,6 +273,8 @@ impl Language {
             (Self::English, Rank::Wild) => "WILD".to_owned(),
             (Self::English, Rank::WildDrawFour) => "WILD +4".to_owned(),
             (Self::English, Rank::WildDrawSixteen) => "< WILD +16 >".to_owned(),
+            (Self::English, Rank::WildDiscardThirtyTwo) => "< WILD -32 >".to_owned(),
+            (Self::English, Rank::WildDiscardSixtyFour) => "< WILD -64 >".to_owned(),
             (Self::Chinese, Rank::Skip) => "禁".to_owned(),
             (Self::Chinese, Rank::Reverse) => "转".to_owned(),
             (Self::Chinese, Rank::DrawTwo) => "+2".to_owned(),
@@ -269,6 +282,8 @@ impl Language {
             (Self::Chinese, Rank::Wild) => "变色".to_owned(),
             (Self::Chinese, Rank::WildDrawFour) => "变色 +4".to_owned(),
             (Self::Chinese, Rank::WildDrawSixteen) => "< 变色 +16 >".to_owned(),
+            (Self::Chinese, Rank::WildDiscardThirtyTwo) => "< 变色 -32 >".to_owned(),
+            (Self::Chinese, Rank::WildDiscardSixtyFour) => "< 变色 -64 >".to_owned(),
         };
         if card.is_wild() {
             rank
@@ -428,7 +443,19 @@ mod tests {
         );
         assert_eq!(
             Language::Chinese.deck_variant(DeckVariant::Holiday),
-            "节日 122"
+            "节日 126"
+        );
+        assert_eq!(
+            Language::English.card(Card::wild(Rank::WildDiscardThirtyTwo)),
+            "< WILD -32 >"
+        );
+        assert_eq!(
+            Language::Chinese.card(Card::wild(Rank::WildDiscardSixtyFour)),
+            "< 变色 -64 >"
+        );
+        assert_eq!(
+            Language::English.redistribute_log("P played WILD -32", 32, 12),
+            "P played WILD -32, discarded 32 cards and distributed 12 cards"
         );
         assert_eq!(
             Language::English.graphics(GraphicsChoice::GraphicsBeta, GraphicsBackend::Termwiz),

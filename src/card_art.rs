@@ -115,6 +115,8 @@ fn rank_label(rank: Rank) -> &'static str {
         Rank::Wild => "W",
         Rank::WildDrawFour => "+4",
         Rank::WildDrawSixteen => "+16",
+        Rank::WildDiscardThirtyTwo => "-32",
+        Rank::WildDiscardSixtyFour => "-64",
     }
 }
 
@@ -308,6 +310,7 @@ fn glyph(character: char) -> [u8; 7] {
             0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110,
         ],
         '+' => [0, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0],
+        '-' => [0, 0, 0, 0b11111, 0, 0, 0],
         'R' => [
             0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
         ],
@@ -334,11 +337,17 @@ mod tests {
             Rank::Wild,
             Rank::WildDrawFour,
             Rank::WildDrawSixteen,
+            Rank::WildDiscardThirtyTwo,
+            Rank::WildDiscardSixtyFour,
         ];
         for rank in ranks {
             let card = if matches!(
                 rank,
-                Rank::Wild | Rank::WildDrawFour | Rank::WildDrawSixteen
+                Rank::Wild
+                    | Rank::WildDrawFour
+                    | Rank::WildDrawSixteen
+                    | Rank::WildDiscardThirtyTwo
+                    | Rank::WildDiscardSixtyFour
             ) {
                 Card::wild(rank)
             } else {
@@ -366,6 +375,15 @@ mod tests {
         assert_eq!(*wild.get_pixel(150, 20), YELLOW);
         assert_eq!(*wild.get_pixel(20, 240), GREEN);
         assert_eq!(*wild.get_pixel(150, 240), BLUE);
+    }
+
+    #[test]
+    fn discard_wilds_render_a_minus_sign_in_the_center() {
+        for rank in [Rank::WildDiscardThirtyTwo, Rank::WildDiscardSixtyFour] {
+            let image = generate_card_art(Card::wild(rank)).into_rgba8();
+            assert_eq!(*image.get_pixel(40, 135), WHITE);
+            assert_eq!(*image.get_pixel(40, 110), BLACK);
+        }
     }
 
     #[test]

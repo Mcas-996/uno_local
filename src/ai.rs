@@ -168,6 +168,8 @@ fn choose_scored<R: Rng + ?Sized>(
                 Rank::Wild => 1,
                 Rank::WildDrawFour => 7,
                 Rank::WildDrawSixteen => 15,
+                Rank::WildDiscardThirtyTwo => 50,
+                Rank::WildDiscardSixtyFour => 100,
             };
         if card.is_wild() && has_colored_play {
             score -= 8;
@@ -176,6 +178,7 @@ fn choose_scored<R: Rng + ?Sized>(
             score += match card.rank {
                 Rank::WildDrawFour => 14,
                 Rank::WildDrawSixteen => 22,
+                Rank::WildDiscardThirtyTwo | Rank::WildDiscardSixtyFour => 0,
                 Rank::DrawEight => 18,
                 Rank::DrawTwo => 12,
                 Rank::Skip | Rank::Reverse => 10,
@@ -365,6 +368,29 @@ mod tests {
             choose_action(Difficulty::Hard, &state(2), &hand, &legal, &mut rng),
             Action::Play {
                 card: wild_sixteen,
+                chosen_color: Some(Color::Blue),
+                swap_target: None,
+            }
+        );
+    }
+
+    #[test]
+    fn scored_ai_prioritizes_legal_discard_wild_and_chooses_dominant_color() {
+        let discard = Card::wild(Rank::WildDiscardThirtyTwo);
+        let colored = Card::new(Color::Red, Rank::DrawEight);
+        let hand = [
+            discard,
+            colored,
+            Card::new(Color::Blue, Rank::Number(2)),
+            Card::new(Color::Blue, Rank::Number(6)),
+        ];
+        let legal = [play(discard), play(colored), Action::Draw];
+        let mut rng = StdRng::seed_from_u64(18);
+
+        assert_eq!(
+            choose_action(Difficulty::Hard, &state(20), &hand, &legal, &mut rng),
+            Action::Play {
+                card: discard,
                 chosen_color: Some(Color::Blue),
                 swap_target: None,
             }

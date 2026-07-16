@@ -687,6 +687,12 @@ impl App {
                     Some(HandEffect::Rotate { direction }) => {
                         self.language.rotate_log(&played, direction)
                     }
+                    Some(HandEffect::Redistribute {
+                        discarded,
+                        distributed,
+                    }) => self
+                        .language
+                        .redistribute_log(&played, discarded, distributed),
                     None => played,
                 }
             }

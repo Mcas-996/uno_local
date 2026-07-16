@@ -107,6 +107,8 @@ pub enum Rank {
     Wild,
     WildDrawFour,
     WildDrawSixteen,
+    WildDiscardThirtyTwo,
+    WildDiscardSixtyFour,
 }
 
 impl fmt::Display for Rank {
@@ -120,6 +122,8 @@ impl fmt::Display for Rank {
             Self::Wild => f.write_str("wild"),
             Self::WildDrawFour => f.write_str("wild-draw-four"),
             Self::WildDrawSixteen => f.write_str("wild-draw-sixteen"),
+            Self::WildDiscardThirtyTwo => f.write_str("wild-discard-thirty-two"),
+            Self::WildDiscardSixtyFour => f.write_str("wild-discard-sixty-four"),
         }
     }
 }
@@ -145,7 +149,11 @@ impl Card {
     pub fn is_wild(self) -> bool {
         matches!(
             self.rank,
-            Rank::Wild | Rank::WildDrawFour | Rank::WildDrawSixteen
+            Rank::Wild
+                | Rank::WildDrawFour
+                | Rank::WildDrawSixteen
+                | Rank::WildDiscardThirtyTwo
+                | Rank::WildDiscardSixtyFour
         )
     }
 }
@@ -215,8 +223,16 @@ pub enum Action {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HandEffect {
-    Swap { target: PlayerId },
-    Rotate { direction: Direction },
+    Swap {
+        target: PlayerId,
+    },
+    Rotate {
+        direction: Direction,
+    },
+    Redistribute {
+        discarded: usize,
+        distributed: usize,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -758,6 +774,22 @@ impl Game {
                 self.advance_turn(1);
                 None
             }
+            Rank::WildDiscardThirtyTwo => {
+                self.redistribute_and_discard(44, 12);
+                self.advance_turn(2);
+                Some(HandEffect::Redistribute {
+                    discarded: 32,
+                    distributed: 12,
+                })
+            }
+            Rank::WildDiscardSixtyFour => {
+                self.redistribute_and_discard(88, 24);
+                self.advance_turn(2);
+                Some(HandEffect::Redistribute {
+                    discarded: 64,
+                    distributed: 24,
+                })
+            }
             Rank::Number(7) if self.house_rules.seven_zero => {
                 let target = swap_target.expect("validated seven target");
                 let target_index = self
@@ -778,6 +810,42 @@ impl Game {
                 None
             }
         }
+    }
+
+    fn redistribute_and_discard(&mut self, processed_count: usize, distributed_count: usize) {
+        let actor = self.current_index;
+        let mut indices = (0..self.players[actor].hand.len()).collect::<Vec<_>>();
+        indices.shuffle(&mut self.rng);
+        indices.truncate(processed_count);
+        let selected = indices.into_iter().collect::<BTreeSet<_>>();
+
+        let original_hand = std::mem::take(&mut self.players[actor].hand);
+        let mut processed = Vec::with_capacity(processed_count);
+        for (index, card) in original_hand.into_iter().enumerate() {
+            if selected.contains(&index) {
+                processed.push(card);
+            } else {
+                self.players[actor].hand.push(card);
+            }
+        }
+        processed.shuffle(&mut self.rng);
+
+        let player_count = self.players.len();
+        let recipients = (1..player_count)
+            .map(|offset| (actor + offset) % player_count)
+            .collect::<Vec<_>>();
+        for (index, card) in processed.drain(..distributed_count).enumerate() {
+            self.players[recipients[index % recipients.len()]]
+                .hand
+                .push(card);
+        }
+
+        let effect_card = self
+            .discard_pile
+            .pop()
+            .expect("played effect card is on the discard pile");
+        self.discard_pile.extend(processed);
+        self.discard_pile.push(effect_card);
     }
 
     fn swap_hands(&mut self, first: usize, second: usize) {
@@ -807,6 +875,14 @@ impl Game {
     }
 
     fn is_playable_for(&self, hand: &[Card], card: Card) -> bool {
+        let minimum_hand = match card.rank {
+            Rank::WildDiscardThirtyTwo => Some(66),
+            Rank::WildDiscardSixtyFour => Some(132),
+            _ => None,
+        };
+        if minimum_hand.is_some_and(|minimum| hand.len() < minimum) {
+            return false;
+        }
         if matches!(card.rank, Rank::WildDrawFour)
             && hand
                 .iter()
@@ -1004,16 +1080,18 @@ fn required_rank_for_rule(rule: PlayerDrawRule, received: usize) -> Option<Rank>
 }
 
 fn card_allowed_for_rule(rule: PlayerDrawRule, card: &Card) -> bool {
+    let high_wild = matches!(
+        card.rank,
+        Rank::WildDrawSixteen | Rank::WildDiscardThirtyTwo | Rank::WildDiscardSixtyFour
+    );
     match rule {
-        PlayerDrawRule::ExcludeDrawEightAndSixteen => {
-            !matches!(card.rank, Rank::DrawEight | Rank::WildDrawSixteen)
-        }
-        PlayerDrawRule::ExcludeDrawSixteen => card.rank != Rank::WildDrawSixteen,
+        PlayerDrawRule::ExcludeDrawEightAndSixteen => card.rank != Rank::DrawEight && !high_wild,
+        PlayerDrawRule::ExcludeDrawSixteen => !high_wild,
         PlayerDrawRule::GuaranteeDrawEightPerSeven
         | PlayerDrawRule::GuaranteeDrawEightPerFiveAndSixteenPerTen
         | PlayerDrawRule::GuaranteeDrawEightPerTwenty => true,
         PlayerDrawRule::TwoDrawEightAndOneSixteenPerSeven => {
-            !matches!(card.rank, Rank::DrawEight | Rank::WildDrawSixteen)
+            card.rank != Rank::DrawEight && !high_wild
         }
     }
 }
@@ -1049,13 +1127,17 @@ pub fn standard_deck() -> Vec<Card> {
 
 pub fn holiday_deck() -> Vec<Card> {
     let mut deck = standard_deck();
-    deck.reserve(10);
+    deck.reserve(14);
     for color in Color::ALL {
         deck.push(Card::new(color, Rank::DrawEight));
         deck.push(Card::new(color, Rank::DrawEight));
     }
     deck.push(Card::wild(Rank::WildDrawSixteen));
     deck.push(Card::wild(Rank::WildDrawSixteen));
+    deck.push(Card::wild(Rank::WildDiscardThirtyTwo));
+    deck.push(Card::wild(Rank::WildDiscardThirtyTwo));
+    deck.push(Card::wild(Rank::WildDiscardSixtyFour));
+    deck.push(Card::wild(Rank::WildDiscardSixtyFour));
     deck
 }
 
@@ -1090,7 +1172,7 @@ mod tests {
     #[test]
     fn holiday_deck_has_exact_expansion_cards() {
         let deck = holiday_deck();
-        assert_eq!(deck.len(), 122);
+        assert_eq!(deck.len(), 126);
         for color in Color::ALL {
             assert_eq!(
                 deck.iter()
@@ -1108,6 +1190,18 @@ mod tests {
         assert_eq!(
             deck.iter()
                 .filter(|card| **card == Card::wild(Rank::WildDrawSixteen))
+                .count(),
+            2
+        );
+        assert_eq!(
+            deck.iter()
+                .filter(|card| **card == Card::wild(Rank::WildDiscardThirtyTwo))
+                .count(),
+            2
+        );
+        assert_eq!(
+            deck.iter()
+                .filter(|card| **card == Card::wild(Rank::WildDiscardSixtyFour))
                 .count(),
             2
         );
@@ -1153,17 +1247,21 @@ mod tests {
         )
         .unwrap();
         let bot = PlayerId::new("p1");
-        assert!(
-            game.hand_for(&bot)
-                .unwrap()
-                .iter()
-                .all(|card| !matches!(card.rank, Rank::DrawEight | Rank::WildDrawSixteen))
-        );
+        assert!(game.hand_for(&bot).unwrap().iter().all(|card| !matches!(
+            card.rank,
+            Rank::DrawEight
+                | Rank::WildDrawSixteen
+                | Rank::WildDiscardThirtyTwo
+                | Rank::WildDiscardSixtyFour
+        )));
         for _ in 0..30 {
             let card = game.draw_card_for(&bot).unwrap();
             assert!(!matches!(
                 card.rank,
-                Rank::DrawEight | Rank::WildDrawSixteen
+                Rank::DrawEight
+                    | Rank::WildDrawSixteen
+                    | Rank::WildDiscardThirtyTwo
+                    | Rank::WildDiscardSixtyFour
             ));
         }
     }
@@ -1178,17 +1276,15 @@ mod tests {
         )
         .unwrap();
         let bot = PlayerId::new("p1");
-        assert!(
-            game.hand_for(&bot)
-                .unwrap()
-                .iter()
-                .all(|card| card.rank != Rank::WildDrawSixteen)
-        );
+        assert!(game.hand_for(&bot).unwrap().iter().all(|card| !matches!(
+            card.rank,
+            Rank::WildDrawSixteen | Rank::WildDiscardThirtyTwo | Rank::WildDiscardSixtyFour
+        )));
         for _ in 0..30 {
-            assert_ne!(
+            assert!(!matches!(
                 game.draw_card_for(&bot).unwrap().rank,
-                Rank::WildDrawSixteen
-            );
+                Rank::WildDrawSixteen | Rank::WildDiscardThirtyTwo | Rank::WildDiscardSixtyFour
+            ));
         }
     }
 
@@ -1330,7 +1426,10 @@ mod tests {
         for _ in 0..30 {
             assert!(!matches!(
                 game.draw_card_for(&human).unwrap().rank,
-                Rank::DrawEight | Rank::WildDrawSixteen
+                Rank::DrawEight
+                    | Rank::WildDrawSixteen
+                    | Rank::WildDiscardThirtyTwo
+                    | Rank::WildDiscardSixtyFour
             ));
         }
     }
@@ -1514,6 +1613,170 @@ mod tests {
         assert_eq!(game.active_color, Color::Green);
         assert_eq!(game.hand_for(&target).unwrap().len(), before + 16);
         assert_eq!(game.current_player(), &current);
+    }
+
+    #[test]
+    fn discard_wilds_require_their_full_pre_play_hand_threshold() {
+        for (rank, minimum) in [
+            (Rank::WildDiscardThirtyTwo, 66),
+            (Rank::WildDiscardSixtyFour, 132),
+        ] {
+            let mut game = game();
+            let current = game.current_player().clone();
+            let card = Card::wild(rank);
+            game.players[0].hand = std::iter::once(card)
+                .chain(
+                    (1..minimum - 1)
+                        .map(|number| Card::new(Color::Red, Rank::Number(number as u8 % 10))),
+                )
+                .collect();
+            assert_eq!(game.players[0].hand.len(), minimum - 1);
+            assert!(!game.legal_actions(&current).unwrap().iter().any(
+                |action| matches!(action, Action::Play { card: candidate, .. } if *candidate == card)
+            ));
+            let before = game.players[0].hand.clone();
+            assert_eq!(
+                game.apply_action(
+                    &current,
+                    Action::Play {
+                        card,
+                        chosen_color: Some(Color::Blue),
+                        swap_target: None,
+                    },
+                )
+                .unwrap_err(),
+                GameError::CardNotPlayable(card)
+            );
+            assert_eq!(game.players[0].hand, before);
+
+            game.players[0]
+                .hand
+                .push(Card::new(Color::Yellow, Rank::Number(1)));
+            assert!(game.legal_actions(&current).unwrap().iter().any(
+                |action| matches!(action, Action::Play { card: candidate, .. } if *candidate == card)
+            ));
+        }
+    }
+
+    #[test]
+    fn discard_wilds_redistribute_evenly_discard_exactly_and_skip_next_player() {
+        for player_count in MIN_PLAYERS..=MAX_PLAYERS {
+            for (rank, minimum, processed, distributed, discarded) in [
+                (Rank::WildDiscardThirtyTwo, 66, 44, 12, 32),
+                (Rank::WildDiscardSixtyFour, 132, 88, 24, 64),
+            ] {
+                let mut game =
+                    Game::new_seeded(players(player_count), DeckVariant::Holiday, 31).unwrap();
+                let current = game.current_player().clone();
+                let card = Card::wild(rank);
+                game.active_color = Color::Red;
+                game.discard_pile = vec![Card::new(Color::Red, Rank::Number(3))];
+                game.players[0].hand = std::iter::once(card)
+                    .chain((1..minimum).map(|number| {
+                        Card::new(Color::ALL[number % 4], Rank::Number((number % 10) as u8))
+                    }))
+                    .collect();
+                for player in &mut game.players[1..] {
+                    player.hand = vec![Card::new(Color::Blue, Rank::Number(9))];
+                }
+                let before_total = game
+                    .players
+                    .iter()
+                    .map(|player| player.hand.len())
+                    .sum::<usize>();
+                let event = game
+                    .apply_action(
+                        &current,
+                        Action::Play {
+                            card,
+                            chosen_color: Some(Color::Green),
+                            swap_target: None,
+                        },
+                    )
+                    .unwrap();
+
+                assert_eq!(game.players[0].hand.len(), minimum - processed - 1);
+                let received_each = distributed / (player_count - 1);
+                assert!(
+                    game.players[1..]
+                        .iter()
+                        .all(|player| player.hand.len() == received_each + 1)
+                );
+                assert_eq!(game.discard_pile.len(), discarded + 2);
+                assert_eq!(game.discard_pile.last(), Some(&card));
+                assert_eq!(game.active_color, Color::Green);
+                assert_eq!(game.current_index, 2 % player_count);
+                assert_eq!(
+                    game.players
+                        .iter()
+                        .map(|player| player.hand.len())
+                        .sum::<usize>(),
+                    before_total - discarded - 1
+                );
+                assert!(matches!(
+                    event.kind,
+                    EventKind::CardPlayed {
+                        hand_effect: Some(HandEffect::Redistribute {
+                            discarded: event_discarded,
+                            distributed: event_distributed,
+                        }),
+                        ..
+                    } if event_discarded == discarded && event_distributed == distributed
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn discard_wild_randomization_is_reproducible() {
+        let setup = || {
+            let mut game = Game::new_seeded(players(3), DeckVariant::Holiday, 41).unwrap();
+            game.players[0].hand = std::iter::once(Card::wild(Rank::WildDiscardThirtyTwo))
+                .chain((1..66).map(|number| {
+                    Card::new(Color::ALL[number % 4], Rank::Number((number % 10) as u8))
+                }))
+                .collect();
+            game
+        };
+        let mut first = setup();
+        let mut second = setup();
+        let player = first.current_player().clone();
+        let action = Action::Play {
+            card: Card::wild(Rank::WildDiscardThirtyTwo),
+            chosen_color: Some(Color::Yellow),
+            swap_target: None,
+        };
+        first.apply_action(&player, action.clone()).unwrap();
+        second.apply_action(&player, action).unwrap();
+
+        assert_eq!(first.players, second.players);
+        assert_eq!(first.discard_pile, second.discard_pile);
+    }
+
+    #[test]
+    fn discard_wild_skips_in_counter_clockwise_direction() {
+        let mut game = Game::new_seeded(players(4), DeckVariant::Holiday, 42).unwrap();
+        let player = game.current_player().clone();
+        let card = Card::wild(Rank::WildDiscardThirtyTwo);
+        game.direction = Direction::CounterClockwise;
+        game.players[0].hand =
+            std::iter::once(card)
+                .chain((1..66).map(|number| {
+                    Card::new(Color::ALL[number % 4], Rank::Number((number % 10) as u8))
+                }))
+                .collect();
+
+        game.apply_action(
+            &player,
+            Action::Play {
+                card,
+                chosen_color: Some(Color::Blue),
+                swap_target: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(game.current_index, 2);
     }
 
     #[test]
@@ -1963,7 +2226,10 @@ mod tests {
             let card = game.draw_card_for(&bot).unwrap();
             assert!(!matches!(
                 card.rank,
-                Rank::DrawEight | Rank::WildDrawSixteen
+                Rank::DrawEight
+                    | Rank::WildDrawSixteen
+                    | Rank::WildDiscardThirtyTwo
+                    | Rank::WildDiscardSixtyFour
             ));
         }
     }
