@@ -3,7 +3,7 @@
 //! English and Chinese labels for every table and Holiday card.
 
 use crate::ai::Difficulty;
-use crate::app::PlayMode;
+use crate::app::{HandFilter, PlayMode};
 use crate::core::{Card, Color, DeckVariant, Direction, GameError, Rank};
 use crate::frontend::{FallbackReason, GraphicsBackend, GraphicsChoice};
 
@@ -56,6 +56,7 @@ impl Language {
             Message::SelectedCard => ("Selected", "已选手牌"),
             Message::DiscardTop => ("Discard", "弃牌"),
             Message::YourHand => ("Your hand", "你的手牌"),
+            Message::NoMatchingCards => ("No matching cards", "没有匹配的牌"),
             Message::EventLog => ("Events", "事件"),
             Message::Turn => ("Turn", "当前回合"),
             Message::ActiveColor => ("Active color", "当前颜色"),
@@ -69,8 +70,8 @@ impl Language {
             ),
             Message::Help => ("Help", "帮助"),
             Message::HelpBody => (
-                "* STAR CARNIVAL *\n\nShortcuts\n  Arrows/hjkl select  Enter play\n  D draw              P pass\n  : command           Q quit\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n  WILD -32: 66+ cards; discard 32, share 12\n  WILD -64: 132+ cards; discard 64, share 24\n\nCommands\n  play <index>  draw  pass\n  help          new   quit\n\nPress ? or Esc to return.",
-                "* 星光嘉年华 *\n\n快捷键\n  方向键/hjkl 选择手牌  Enter 出牌\n  D 摸牌              P 跳过\n  : 输入命令          Q 退出\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n  变色 -32：66+ 张；弃 32 张，均分 12 张\n  变色 -64：132+ 张；弃 64 张，均分 24 张\n\n命令\n  play <序号>   draw  pass\n  help          new   quit\n\n按 ? 或 Esc 返回。",
+                "* STAR CARNIVAL *\n\nShortcuts\n  Arrows/hjkl select  Enter play\n  F filter             D draw / P pass\n  : command            Q quit\n\nHand filter\n  F cycles All, +, -, and 0/7\n  Visible cards are renumbered from 1\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n  WILD -32: 66+ cards; discard 32, share 12\n  WILD -64: 132+ cards; discard 64, share 24\n\nCommands\n  play <visible index>  draw  pass\n  help                  new   quit\n\nPress ? or Esc to return.",
+                "* 星光嘉年华 *\n\n快捷键\n  方向键/hjkl 选择手牌  Enter 出牌\n  F 筛选               D 摸牌 / P 跳过\n  : 输入命令           Q 退出\n\n手牌筛选\n  F 循环：全部、+、-、0/7\n  可见牌从 1 开始重新编号\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n  变色 -32：66+ 张；弃 32 张，均分 12 张\n  变色 -64：132+ 张；弃 64 张，均分 24 张\n\n命令\n  play <可见序号>  draw  pass\n  help              new   quit\n\n按 ? 或 Esc 返回。",
             ),
             Message::QuitTitle => ("Leave match?", "退出对局？"),
             Message::QuitBody => ("Y confirm · N/Esc cancel", "Y 确认 · N/Esc 取消"),
@@ -127,20 +128,38 @@ impl Language {
             (Self::English, PlayMode::Single) => self.text(Message::HelpBody),
             (Self::Chinese, PlayMode::Single) => self.text(Message::HelpBody),
             (Self::English, PlayMode::Dual) => {
-                "* STAR CARNIVAL *\n\nTwo-player shortcuts\n  Left:    WASD select\n  Right:   hjkl select\n  Current: arrows select\n  Enter play   X draw   P pass\n  : command    Q quit\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n  WILD -32: 66+ cards; discard 32, share 12\n  WILD -64: 132+ cards; discard 64, share 24\n\nCommands act for the current player.\nPress ? or Esc to return."
+                "* STAR CARNIVAL *\n\nTwo-player shortcuts\n  Left:    WASD select\n  Right:   hjkl select\n  Current: arrows select\n  Enter play   X draw   P pass\n  F filter     : command   Q quit\n\nHand filter\n  F cycles All, +, -, and 0/7\n  Both hands use visible indices from 1\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n  WILD -32: 66+ cards; discard 32, share 12\n  WILD -64: 132+ cards; discard 64, share 24\n\nCommands act for the current player and use visible indices.\nPress ? or Esc to return."
             }
             (Self::Chinese, PlayMode::Dual) => {
-                "* 星光嘉年华 *\n\n双人快捷键\n  左侧：WASD 选择手牌\n  右侧：hjkl 选择手牌\n  当前玩家：方向键选择手牌\n  Enter 出牌  X 摸牌  P 跳过\n  : command    Q 退出\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n  变色 -32：66+ 张；弃 32 张，均分 12 张\n  变色 -64：132+ 张；弃 64 张，均分 24 张\n\n命令作用于当前玩家。\n按 ? 或 Esc 返回。"
+                "* 星光嘉年华 *\n\n双人快捷键\n  左侧：WASD 选择手牌\n  右侧：hjkl 选择手牌\n  当前玩家：方向键选择手牌\n  Enter 出牌  X 摸牌  P 跳过\n  F 筛选      : 输入命令  Q 退出\n\n手牌筛选\n  F 循环：全部、+、-、0/7\n  双方可见牌均从 1 开始编号\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n  变色 -32：66+ 张；弃 32 张，均分 12 张\n  变色 -64：132+ 张；弃 64 张，均分 24 张\n\n命令作用于当前玩家并使用可见序号。\n按 ? 或 Esc 返回。"
             }
         }
     }
 
     pub fn game_hint(self, mode: PlayMode) -> &'static str {
         match (self, mode) {
-            (Self::English, PlayMode::Single) => "Enter play · D draw · P pass · ? help · Q quit",
-            (Self::Chinese, PlayMode::Single) => "Enter 出牌 · D 摸牌 · P 跳过 · ? 帮助 · Q 退出",
-            (Self::English, PlayMode::Dual) => "Enter play · X draw · P pass · ? help · Q quit",
-            (Self::Chinese, PlayMode::Dual) => "Enter 出牌 · X 摸牌 · P 跳过 · ? 帮助 · Q 退出",
+            (Self::English, PlayMode::Single) => {
+                "Enter play · F filter · D draw · P pass · ? help · Q quit"
+            }
+            (Self::Chinese, PlayMode::Single) => {
+                "Enter 出牌 · F 筛选 · D 摸牌 · P 跳过 · ? 帮助 · Q 退出"
+            }
+            (Self::English, PlayMode::Dual) => {
+                "Enter play · F filter · X draw · P pass · ? help · Q quit"
+            }
+            (Self::Chinese, PlayMode::Dual) => {
+                "Enter 出牌 · F 筛选 · X 摸牌 · P 跳过 · ? 帮助 · Q 退出"
+            }
+        }
+    }
+
+    pub const fn hand_filter(self, filter: HandFilter) -> &'static str {
+        match (self, filter) {
+            (Self::English, HandFilter::All) => "All",
+            (Self::Chinese, HandFilter::All) => "全部",
+            (_, HandFilter::Positive) => "+",
+            (_, HandFilter::Negative) => "-",
+            (_, HandFilter::SevenZero) => "0/7",
         }
     }
 
@@ -376,6 +395,7 @@ pub enum Message {
     SelectedCard,
     DiscardTop,
     YourHand,
+    NoMatchingCards,
     EventLog,
     Turn,
     ActiveColor,

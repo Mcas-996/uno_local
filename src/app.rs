@@ -34,6 +34,41 @@ pub enum PlayMode {
     Dual,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum HandFilter {
+    #[default]
+    All,
+    Positive,
+    Negative,
+    SevenZero,
+}
+
+impl HandFilter {
+    pub const fn next(self) -> Self {
+        match self {
+            Self::All => Self::Positive,
+            Self::Positive => Self::Negative,
+            Self::Negative => Self::SevenZero,
+            Self::SevenZero => Self::All,
+        }
+    }
+
+    pub const fn matches(self, card: Card) -> bool {
+        match self {
+            Self::All => true,
+            Self::Positive => matches!(
+                card.rank,
+                Rank::DrawTwo | Rank::DrawEight | Rank::WildDrawFour | Rank::WildDrawSixteen
+            ),
+            Self::Negative => matches!(
+                card.rank,
+                Rank::WildDiscardThirtyTwo | Rank::WildDiscardSixtyFour
+            ),
+            Self::SevenZero => matches!(card.rank, Rank::Number(0 | 7)),
+        }
+    }
+}
+
 impl PlayMode {
     pub const ALL: [Self; 2] = [Self::Single, Self::Dual];
 
@@ -95,6 +130,7 @@ pub struct App {
     pub human_ids: [PlayerId; 2],
     pub ai_ids: Vec<PlayerId>,
     pub selected_cards: [usize; 2],
+    pub hand_filter: HandFilter,
     pub command_mode: bool,
     pub command: String,
     pub pending_wild: Option<PendingWild>,
@@ -124,6 +160,7 @@ impl App {
             human_ids: [PlayerId::new("human-1"), PlayerId::new("human-2")],
             ai_ids: Vec::new(),
             selected_cards: [0; 2],
+            hand_filter: HandFilter::All,
             command_mode: false,
             command: String::new(),
             pending_wild: None,
@@ -188,6 +225,7 @@ impl App {
         );
         self.screen = Screen::Game;
         self.selected_cards = [0; 2];
+        self.hand_filter = HandFilter::All;
         self.command_mode = false;
         self.pending_wild = None;
         self.pending_seven = None;
@@ -380,6 +418,10 @@ impl App {
         }
         match key.code {
             KeyCode::Enter => self.play_current_human_selected(),
+            KeyCode::Char('f' | 'F') => {
+                self.hand_filter = self.hand_filter.next();
+                self.selected_cards = [0; 2];
+            }
             KeyCode::Char('d' | 'D') if self.setup.mode == PlayMode::Single => {
                 self.submit_current_human(Action::Draw)
             }
@@ -435,7 +477,7 @@ impl App {
                 let row_delta = if code == KeyCode::Up { -1 } else { 1 };
                 self.selected_cards[player_index] = crate::view::adjacent_hand_card(
                     self.language,
-                    self.human_hand(player_index).unwrap_or_default(),
+                    &self.visible_human_hand(player_index),
                     self.selected_cards[player_index],
                     hand_width,
                     row_delta,
@@ -446,7 +488,7 @@ impl App {
                     self.selected_cards[player_index].saturating_sub(1);
             }
             KeyCode::Right => {
-                let len = self.human_hand(player_index).map_or(0, <[Card]>::len);
+                let len = self.visible_human_hand(player_index).len();
                 if len > 0 {
                     self.selected_cards[player_index] =
                         (self.selected_cards[player_index] + 1).min(len - 1);
@@ -559,8 +601,8 @@ impl App {
 
     fn play_selected(&mut self, player_index: usize) {
         let Some(card) = self
-            .human_hand(player_index)
-            .and_then(|hand| hand.get(self.selected_cards[player_index]))
+            .visible_human_hand(player_index)
+            .get(self.selected_cards[player_index])
             .copied()
         else {
             self.status = self.language.text(Message::InvalidCardIndex).to_owned();
@@ -716,7 +758,7 @@ impl App {
             self.status = line;
         }
         for player_index in 0..self.setup.mode.human_count() {
-            let hand_len = self.human_hand(player_index).map_or(0, <[Card]>::len);
+            let hand_len = self.visible_human_hand(player_index).len();
             self.selected_cards[player_index] =
                 self.selected_cards[player_index].min(hand_len.saturating_sub(1));
         }
@@ -730,13 +772,13 @@ impl App {
     fn run_command(&mut self, input: &str) {
         match AppCommand::parse(input) {
             Ok(AppCommand::Play(index)) => {
-                if index == 0 {
-                    self.status = self.language.text(Message::InvalidCardIndex).to_owned();
-                    return;
-                }
                 let Some(player_index) = self.current_human_index() else {
                     return;
                 };
+                if index == 0 || index > self.visible_human_hand(player_index).len() {
+                    self.status = self.language.text(Message::InvalidCardIndex).to_owned();
+                    return;
+                }
                 self.selected_cards[player_index] = index - 1;
                 self.play_selected(player_index);
             }
@@ -775,6 +817,15 @@ impl App {
             .and_then(|game| game.hand_for(&self.human_ids[player_index]).ok())
     }
 
+    pub fn visible_human_hand(&self, player_index: usize) -> Vec<Card> {
+        self.human_hand(player_index)
+            .unwrap_or_default()
+            .iter()
+            .copied()
+            .filter(|card| self.hand_filter.matches(*card))
+            .collect()
+    }
+
     pub fn current_human_index(&self) -> Option<usize> {
         let current = self.game.as_ref()?.current_player();
         self.human_ids[..self.setup.mode.human_count()]
@@ -784,7 +835,7 @@ impl App {
 
     pub fn selected_human_card(&self) -> Option<Card> {
         let player_index = self.current_human_index()?;
-        self.human_hand(player_index)?
+        self.visible_human_hand(player_index)
             .get(self.selected_cards[player_index])
             .copied()
     }
@@ -958,6 +1009,110 @@ mod tests {
         assert_eq!(AppCommand::parse("quit"), Ok(AppCommand::Quit));
         assert!(AppCommand::parse("play nope").is_err());
         assert!(AppCommand::parse("draw now").is_err());
+    }
+
+    #[test]
+    fn hand_filter_categories_match_the_documented_ranks() {
+        let colored = |rank| Card::new(Color::Red, rank);
+        for card in [
+            colored(Rank::DrawTwo),
+            Card::wild(Rank::WildDrawFour),
+            colored(Rank::DrawEight),
+            Card::wild(Rank::WildDrawSixteen),
+        ] {
+            assert!(HandFilter::Positive.matches(card));
+        }
+        for card in [
+            Card::wild(Rank::WildDiscardThirtyTwo),
+            Card::wild(Rank::WildDiscardSixtyFour),
+        ] {
+            assert!(HandFilter::Negative.matches(card));
+        }
+        for rank in [Rank::Number(0), Rank::Number(7)] {
+            assert!(HandFilter::SevenZero.matches(colored(rank)));
+        }
+        assert!(!HandFilter::Positive.matches(colored(Rank::Number(7))));
+        assert!(!HandFilter::Negative.matches(Card::wild(Rank::WildDrawSixteen)));
+        assert!(!HandFilter::SevenZero.matches(colored(Rank::Number(1))));
+    }
+
+    #[test]
+    fn f_cycles_filters_and_resets_visible_selections() {
+        let mut app = App::new(Language::English);
+        app.setup.mode = PlayMode::Dual;
+        app.setup.bot_count = 0;
+        app.start_match().unwrap();
+        let left = app.human_ids[0].clone();
+        app.game.as_mut().unwrap().set_test_turn(
+            &left,
+            vec![
+                Card::new(Color::Red, Rank::Number(1)),
+                Card::new(Color::Blue, Rank::DrawTwo),
+                Card::wild(Rank::WildDiscardThirtyTwo),
+                Card::new(Color::Green, Rank::Number(7)),
+            ],
+            Card::new(Color::Red, Rank::Number(5)),
+        );
+        app.selected_cards = [2, 3];
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE), 80);
+        assert_eq!(app.hand_filter, HandFilter::Positive);
+        assert_eq!(app.selected_cards, [0, 0]);
+        assert_eq!(
+            app.visible_human_hand(0),
+            vec![Card::new(Color::Blue, Rank::DrawTwo)]
+        );
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('F'), KeyModifiers::SHIFT), 80);
+        assert_eq!(app.hand_filter, HandFilter::Negative);
+        assert_eq!(
+            app.visible_human_hand(0),
+            vec![Card::wild(Rank::WildDiscardThirtyTwo)]
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE), 80);
+        assert_eq!(app.hand_filter, HandFilter::SevenZero);
+        assert_eq!(
+            app.visible_human_hand(0),
+            vec![Card::new(Color::Green, Rank::Number(7))]
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE), 80);
+        assert_eq!(app.hand_filter, HandFilter::All);
+        assert_eq!(app.visible_human_hand(0).len(), 4);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE), 80);
+        app.start_match().unwrap();
+        assert_eq!(app.hand_filter, HandFilter::All);
+    }
+
+    #[test]
+    fn play_command_uses_the_visible_filter_index() {
+        let mut app = App::new(Language::English);
+        app.setup.bot_count = 1;
+        app.start_match().unwrap();
+        let human = app.human_ids[0].clone();
+        app.game.as_mut().unwrap().set_test_turn(
+            &human,
+            vec![
+                Card::new(Color::Red, Rank::Number(1)),
+                Card::new(Color::Red, Rank::DrawTwo),
+                Card::new(Color::Blue, Rank::Number(7)),
+                Card::new(Color::Red, Rank::DrawEight),
+            ],
+            Card::new(Color::Red, Rank::Number(5)),
+        );
+        app.hand_filter = HandFilter::Positive;
+
+        app.run_command("play 3");
+        assert_eq!(app.status, app.language.text(Message::InvalidCardIndex));
+        assert_eq!(app.selected_cards[0], 0);
+
+        app.run_command("play 2");
+
+        assert_eq!(
+            app.game.as_ref().unwrap().public_state().discard_top,
+            Card::new(Color::Red, Rank::DrawEight)
+        );
+        assert_eq!(app.selected_cards[0], 0);
     }
 
     #[test]

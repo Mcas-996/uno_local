@@ -643,11 +643,23 @@ fn render_game(canvas: &mut Canvas, app: &App, images: bool) {
 }
 
 fn render_hand_panel(canvas: &mut Canvas, app: &App, player_index: usize, rect: Rect, title: &str) {
-    canvas.border(rect, title);
-    let hand = app.human_hand(player_index).unwrap_or_default();
+    canvas.border(
+        rect,
+        &format!("{title} [F:{}]", app.language.hand_filter(app.hand_filter)),
+    );
+    let hand = app.visible_human_hand(player_index);
+    if hand.is_empty() {
+        canvas.text(
+            rect.x + 2,
+            rect.y + 2,
+            app.language.text(Message::NoMatchingCards),
+            Style::fg(UiColor::Gray),
+        );
+        return;
+    }
     let rows = wrap_hand(
         app.language,
-        hand,
+        &hand,
         rect.width.saturating_sub(2).max(1) as usize,
     );
     let selected_row = rows
@@ -790,6 +802,35 @@ mod tests {
     }
 
     #[test]
+    fn filtered_hand_renders_state_and_empty_message_without_selected_image() {
+        let mut app = App::with_graphics(Language::English, GraphicsChoice::GraphicsBeta);
+        app.setup.bot_count = 1;
+        app.start_match().unwrap();
+        let human = app.human_ids[0].clone();
+        app.game.as_mut().unwrap().set_test_turn(
+            &human,
+            vec![Card::new(Color::Red, crate::core::Rank::Number(1))],
+            Card::new(Color::Red, crate::core::Rank::Number(5)),
+        );
+        app.hand_filter = crate::app::HandFilter::Negative;
+
+        let game = render(
+            &app,
+            GraphicsBackend::Sixel,
+            Viewport {
+                columns: 80,
+                rows: 28,
+            },
+        );
+        let text = game.plain_text();
+
+        assert!(text.contains("Your hand [F:-]"));
+        assert!(text.contains("No matching cards"));
+        assert_eq!(game.images.len(), 1);
+        assert_eq!(game.images[0].slot, ImageSlot::Discard);
+    }
+
+    #[test]
     fn dual_mode_renders_both_hands_and_current_preview() {
         let mut app = App::with_graphics(Language::English, GraphicsChoice::GraphicsBeta);
         app.setup.mode = PlayMode::Dual;
@@ -808,7 +849,7 @@ mod tests {
 
         assert!(text.contains("*Left [WASD/Arrows]"));
         assert!(text.contains("Right [hjkl]"));
-        assert!(text.contains("Enter play · X draw · P pass"));
+        assert!(text.contains("Enter play · F filter · X draw · P pass"));
         assert_eq!(game.images.len(), 2);
 
         let right = app.human_ids[1].clone();
