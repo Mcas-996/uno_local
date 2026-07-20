@@ -19,7 +19,8 @@ use crate::i18n::{Language, Message};
 
 const AI_DELAY: Duration = Duration::from_secs(1);
 const MAX_LOGS: usize = 8;
-const HAND_WINDOW_RADIUS: usize = 128;
+const HAND_WINDOW_RADIUS: usize = crate::core::HAND_BATCH_SIZE;
+const PAGE_SWITCH_PRESSES: u8 = 5;
 
 #[derive(Default)]
 struct VisibleHandCache {
@@ -160,6 +161,8 @@ pub struct App {
     ai_deadline: Instant,
     ai_rng: StdRng,
     visible_hand_cache: RefCell<VisibleHandCache>,
+    page_up_presses: [u8; 2],
+    page_down_presses: [u8; 2],
 }
 
 impl App {
@@ -192,6 +195,8 @@ impl App {
             ai_deadline: Instant::now(),
             ai_rng: StdRng::from_entropy(),
             visible_hand_cache: RefCell::new(VisibleHandCache::default()),
+            page_up_presses: [0; 2],
+            page_down_presses: [0; 2],
         }
     }
 
@@ -247,6 +252,7 @@ impl App {
         self.selected_cards = [0; 2];
         self.hand_filter = HandFilter::All;
         self.invalidate_visible_hands();
+        self.reset_page_presses();
         self.command_mode = false;
         self.pending_color = None;
         self.pending_seven = None;
@@ -449,6 +455,7 @@ impl App {
                 self.hand_filter = self.hand_filter.next();
                 self.selected_cards = [0; 2];
                 self.invalidate_visible_hands();
+                self.reset_page_presses();
             }
             KeyCode::Char('g' | 'G') => self.play_best_plus_batch(),
             KeyCode::Char('d' | 'D') if self.setup.mode == PlayMode::Single => {
@@ -503,20 +510,35 @@ impl App {
         } as usize;
         match code {
             KeyCode::Up | KeyCode::Down => {
+                let at_boundary = self.selection_is_vertical_boundary(
+                    player_index,
+                    hand_width,
+                    code == KeyCode::Up,
+                );
+                if at_boundary && self.count_page_boundary_press(player_index, code) {
+                    return;
+                }
                 let row_delta = if code == KeyCode::Up { -1 } else { 1 };
                 let (first_index, hand) = self.visible_human_window(player_index);
-                self.selected_cards[player_index] = crate::view::adjacent_hand_card(
+                let previous = self.selected_cards[player_index];
+                let selected = crate::view::adjacent_hand_card(
                     self.language,
                     &hand,
                     first_index,
-                    self.selected_cards[player_index],
+                    previous,
                     hand_width,
                     row_delta,
                 );
+                self.selected_cards[player_index] = selected;
+                if selected != previous || !at_boundary {
+                    self.page_up_presses[player_index] = 0;
+                    self.page_down_presses[player_index] = 0;
+                }
             }
             KeyCode::Left => {
                 self.selected_cards[player_index] =
                     self.selected_cards[player_index].saturating_sub(1);
+                self.reset_page_press_if_off_boundary(player_index, hand_width);
             }
             KeyCode::Right => {
                 let len = self.visible_human_hand_len(player_index);
@@ -524,9 +546,86 @@ impl App {
                     self.selected_cards[player_index] =
                         (self.selected_cards[player_index] + 1).min(len - 1);
                 }
+                self.reset_page_press_if_off_boundary(player_index, hand_width);
             }
             _ => {}
         }
+    }
+
+    fn reset_page_press_if_off_boundary(&mut self, player_index: usize, hand_width: usize) {
+        if !self.selection_is_vertical_boundary(player_index, hand_width, true) {
+            self.page_up_presses[player_index] = 0;
+        }
+        if !self.selection_is_vertical_boundary(player_index, hand_width, false) {
+            self.page_down_presses[player_index] = 0;
+        }
+    }
+
+    fn selection_is_vertical_boundary(
+        &self,
+        player_index: usize,
+        hand_width: usize,
+        top: bool,
+    ) -> bool {
+        let (first_index, hand) = self.visible_human_window(player_index);
+        if hand.is_empty() {
+            return true;
+        }
+        let rows =
+            crate::view::wrap_hand_indexed(self.language, &hand, first_index, hand_width.max(1));
+        let selected_row = rows.iter().position(|row| {
+            row.iter()
+                .any(|(index, _)| *index == self.selected_cards[player_index])
+        });
+        selected_row.is_some_and(|row| if top { row == 0 } else { row + 1 == rows.len() })
+    }
+
+    fn count_page_boundary_press(&mut self, player_index: usize, code: KeyCode) -> bool {
+        let up = code == KeyCode::Up;
+        let (counter, direction) = if up {
+            (&mut self.page_up_presses[player_index], -1_isize)
+        } else {
+            (&mut self.page_down_presses[player_index], 1_isize)
+        };
+        *counter = counter.saturating_add(1);
+        let presses = *counter;
+        if presses < PAGE_SWITCH_PRESSES {
+            self.status = self
+                .language
+                .page_press_status(up, PAGE_SWITCH_PRESSES - presses);
+            return true;
+        }
+        let player = self.human_ids[player_index].clone();
+        let Some(game) = self.game.as_ref() else {
+            return true;
+        };
+        let Ok((page, pages, _)) = game.hand_page_for(&player) else {
+            return true;
+        };
+        let target = if direction < 0 {
+            page.checked_sub(1)
+        } else {
+            (page + 1 < pages).then_some(page + 1)
+        };
+        self.reset_page_presses();
+        let Some(target) = target else {
+            self.status = self.language.page_edge_status(up).to_owned();
+            return true;
+        };
+        if self
+            .game
+            .as_mut()
+            .is_some_and(|game| game.materialize_hand_page(&player, target).is_ok())
+        {
+            self.invalidate_visible_hands();
+            self.selected_cards[player_index] = if direction < 0 {
+                self.visible_human_hand_len(player_index).saturating_sub(1)
+            } else {
+                0
+            };
+            self.status = self.language.page_loaded_status(target, pages);
+        }
+        true
     }
 
     fn handle_command_key(&mut self, key: KeyEvent) {
@@ -817,6 +916,12 @@ impl App {
     }
 
     fn take_ai_turn(&mut self) {
+        {
+            let game = self.game.as_mut().expect("game screen has game");
+            let player = game.current_player().clone();
+            game.materialize_next_batch_if_empty(&player)
+                .expect("current player remains in game");
+        }
         let (player, action) = {
             let game = self.game.as_ref().expect("game screen has game");
             let player = game.current_player().clone();
@@ -846,7 +951,14 @@ impl App {
     }
 
     fn after_event(&mut self, event: GameEvent) {
+        if let Some(game) = self.game.as_mut() {
+            for player in &self.human_ids[..self.setup.mode.human_count()] {
+                game.materialize_next_batch_if_empty(player)
+                    .expect("configured human remains in game");
+            }
+        }
         self.invalidate_visible_hands();
+        self.reset_page_presses();
         let state = self.game.as_ref().expect("game exists").public_state();
         let name = state
             .players
@@ -993,6 +1105,7 @@ impl App {
         self.pending_plus_batch = None;
         self.logs.clear();
         self.status.clear();
+        self.reset_page_presses();
     }
 
     pub fn human_hand(&self, player_index: usize) -> Option<&[Card]> {
@@ -1055,6 +1168,19 @@ impl App {
 
     fn invalidate_visible_hands(&self) {
         self.visible_hand_cache.borrow_mut().valid = [false; 2];
+    }
+
+    fn reset_page_presses(&mut self) {
+        self.page_up_presses = [0; 2];
+        self.page_down_presses = [0; 2];
+    }
+
+    pub fn human_hand_page(&self, player_index: usize) -> Option<(usize, usize, usize, usize)> {
+        let game = self.game.as_ref()?;
+        let player = &self.human_ids[player_index];
+        let total = game.hand_len_for(player).ok()?;
+        let (page, pages, concrete) = game.hand_page_for(player).ok()?;
+        Some((page, pages, concrete, total))
     }
 
     pub fn current_human_index(&self) -> Option<usize> {
@@ -1266,7 +1392,7 @@ mod tests {
     }
 
     #[test]
-    fn million_card_hand_uses_a_bounded_global_index_window() {
+    fn million_card_hand_uses_a_bounded_random_page() {
         let mut app = App::new(Language::English);
         app.setup.bot_count = 1;
         app.setup.deck_variant = DeckVariant::Standard;
@@ -1278,16 +1404,77 @@ mod tests {
             Card::new(Color::Red, Rank::Number(1)),
         );
         app.invalidate_visible_hands();
-        app.selected_cards[0] = 500_000;
-
-        assert_eq!(app.visible_human_hand_len(0), 1_000_000);
-        let (first_index, window) = app.visible_human_window(0);
-        assert_eq!(first_index, 499_872);
-        assert_eq!(window.len(), 257);
         assert_eq!(
-            app.visible_human_card(0, 500_000),
+            app.game.as_ref().unwrap().hand_len_for(&human).unwrap(),
+            1_000_000
+        );
+        assert_eq!(app.visible_human_hand_len(0), 200);
+        let (first_index, window) = app.visible_human_window(0);
+        assert_eq!(first_index, 0);
+        assert_eq!(window.len(), 200);
+        assert_eq!(
+            app.visible_human_card(0, 0),
             Some(Card::new(Color::Red, Rank::Number(5)))
         );
+    }
+
+    #[test]
+    fn five_boundary_presses_change_random_hand_pages_in_both_directions() {
+        let mut app = App::new(Language::English);
+        app.setup.bot_count = 1;
+        app.setup.deck_variant = DeckVariant::Standard;
+        app.start_match().unwrap();
+        let human = app.human_ids[0].clone();
+        app.game.as_mut().unwrap().set_test_turn(
+            &human,
+            vec![Card::new(Color::Red, Rank::Number(5)); 401],
+            Card::new(Color::Red, Rank::Number(1)),
+        );
+        app.invalidate_visible_hands();
+        app.selected_cards[0] = 199;
+
+        for _ in 0..4 {
+            app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 80);
+        }
+        assert_eq!(app.human_hand_page(0), Some((0, 3, 200, 401)));
+        assert_eq!(app.page_down_presses[0], 4);
+
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), 80);
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), 80);
+        assert_eq!(app.page_down_presses[0], 4);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 80);
+
+        assert_eq!(app.human_hand_page(0), Some((1, 3, 200, 401)));
+        assert_eq!(app.selected_cards[0], 0);
+        for _ in 0..5 {
+            app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), 80);
+        }
+        assert_eq!(app.human_hand_page(0), Some((0, 3, 200, 401)));
+        assert_eq!(app.selected_cards[0], 199);
+    }
+
+    #[test]
+    fn filter_change_resets_boundary_page_progress() {
+        let mut app = App::new(Language::English);
+        app.setup.bot_count = 1;
+        app.start_match().unwrap();
+        let human = app.human_ids[0].clone();
+        app.game.as_mut().unwrap().set_test_turn(
+            &human,
+            vec![Card::new(Color::Red, Rank::Number(5)); 201],
+            Card::new(Color::Red, Rank::Number(1)),
+        );
+        app.invalidate_visible_hands();
+        app.selected_cards[0] = 199;
+        for _ in 0..4 {
+            app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), 80);
+        }
+        assert_eq!(app.page_down_presses[0], 4);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE), 80);
+
+        assert_eq!(app.page_down_presses, [0; 2]);
+        assert_eq!(app.page_up_presses, [0; 2]);
     }
 
     #[test]
@@ -1514,7 +1701,7 @@ mod tests {
         app.start_match().unwrap();
         let human = app.human_ids[0].clone();
         let target = app.ai_ids[0].clone();
-        let target_before = app.game.as_ref().unwrap().hand_for(&target).unwrap().len();
+        let target_before = app.game.as_ref().unwrap().hand_len_for(&target).unwrap();
         app.game.as_mut().unwrap().set_test_turn(
             &human,
             vec![Card::wild(Rank::WildDrawSixteen); 32],
@@ -1534,7 +1721,7 @@ mod tests {
         assert!(app.pending_plus_batch.is_none());
         assert!(app.human_hand(0).unwrap().is_empty());
         assert_eq!(
-            app.game.as_ref().unwrap().hand_for(&target).unwrap().len(),
+            app.game.as_ref().unwrap().hand_len_for(&target).unwrap(),
             target_before + 512
         );
         assert!(

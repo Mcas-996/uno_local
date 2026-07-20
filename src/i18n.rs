@@ -74,8 +74,8 @@ impl Language {
             ),
             Message::Help => ("Help", "帮助"),
             Message::HelpBody => (
-                "* STAR CARNIVAL *\n\nShortcuts\n  Arrows/hjkl select  Enter play\n  F filter             D draw / P pass\n  G auto +2/+8/+16     : command  Q quit\n\nHand filter\n  F cycles All, +, -, and 0/7\n  Visible cards are renumbered from 1\n\nAuto plus\n  G plays the longest legal +2/+8/+16 sequence\n  Intermediate +16 cards bridge colors\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank; WILD +16 changes color\n  WILD -32/-64 discard and share large hands\n  WILD x!: next hand becomes min(x!, x^7, 1M)\n  WILD sqrt: own remaining hand becomes floor(sqrt(x))\n  Both math wilds skip the next player\n\nCommands\n  play <visible index>  draw  pass\n  help                  new   quit\n\nPress ? or Esc to return.",
-                "* 星光嘉年华 *\n\n快捷键\n  方向键/hjkl 选择手牌  Enter 出牌\n  F 筛选               D 摸牌 / P 跳过\n  G 自动出 +2/+8/+16   : 输入命令  Q 退出\n\n手牌筛选\n  F 循环：全部、+、-、0/7\n  可见牌从 1 开始重新编号\n\n自动出加牌\n  G 打出最长合法 +2/+8/+16 组合\n  中间的 +16 可用于切换颜色\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面；变色 +16 可改变颜色\n  变色 -32/-64 可处理并分发大量手牌\n  变色阶乘：下家变为 min(x!, x^7, 1M) 张\n  变色平方根：自己剩余手牌变为 floor(sqrt(x)) 张\n  两种数学牌都会跳过下家\n\n命令\n  play <可见序号>  draw  pass\n  help              new   quit\n\n按 ? 或 Esc 返回。",
+                "* STAR CARNIVAL *\n\nShortcuts\n  Arrows/hjkl select  Enter play\n  F filter             D draw / P pass\n  G auto +2/+8/+16     : command  Q quit\n\nHand filter\n  F cycles All, +, -, and 0/7\n  Visible cards are renumbered from 1\n\nLarge hands\n  At most 200 cards are loaded at once\n  Press Down 5 times at the bottom for the next random page\n  Press Up 5 times at the top to regenerate the previous page\n\nAuto plus\n  G plays the longest legal +2/+8/+16 sequence\n  Intermediate +16 cards bridge colors\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank; WILD +16 changes color\n  WILD -32/-64 discard and share large hands\n  WILD x!: next hand becomes min(x!, x^7, 1M)\n  WILD sqrt: own remaining hand becomes floor(sqrt(x))\n  Both math wilds skip the next player\n\nCommands\n  play <visible index>  draw  pass\n  help                  new   quit\n\nPress ? or Esc to return.",
+                "* 星光嘉年华 *\n\n快捷键\n  方向键/hjkl 选择手牌  Enter 出牌\n  F 筛选               D 摸牌 / P 跳过\n  G 自动出 +2/+8/+16   : 输入命令  Q 退出\n\n手牌筛选\n  F 循环：全部、+、-、0/7\n  可见牌从 1 开始重新编号\n\n大量手牌\n  每次最多加载 200 张具体牌\n  在底部按 5 次下键加载下一随机页\n  在顶部按 5 次上键重新生成上一页\n\n自动出加牌\n  G 打出最长合法 +2/+8/+16 组合\n  中间的 +16 可用于切换颜色\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面；变色 +16 可改变颜色\n  变色 -32/-64 可处理并分发大量手牌\n  变色阶乘：下家变为 min(x!, x^7, 1M) 张\n  变色平方根：自己剩余手牌变为 floor(sqrt(x)) 张\n  两种数学牌都会跳过下家\n\n命令\n  play <可见序号>  draw  pass\n  help              new   quit\n\n按 ? 或 Esc 返回。",
             ),
             Message::QuitTitle => ("Leave match?", "退出对局？"),
             Message::QuitBody => ("Y confirm · N/Esc cancel", "Y 确认 · N/Esc 取消"),
@@ -132,10 +132,10 @@ impl Language {
             (Self::English, PlayMode::Single) => self.text(Message::HelpBody),
             (Self::Chinese, PlayMode::Single) => self.text(Message::HelpBody),
             (Self::English, PlayMode::Dual) => {
-                "* STAR CARNIVAL *\n\nTwo-player shortcuts\n  Left:    WASD select\n  Right:   hjkl select\n  Current: arrows select\n  Enter play   X draw   P pass\n  F filter     G auto +2/+8/+16\n  : command    Q quit\n\nAuto plus\n  G plays the current player's longest legal sequence\n  Intermediate +16 cards bridge colors\n\nHand filter\n  F cycles All, +, -, and 0/7\n  Both hands use visible indices from 1\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank; WILD +16 changes color\n  WILD -32/-64 discard and share large hands\n  WILD x!: next hand becomes min(x!, x^7, 1M)\n  WILD sqrt: own remaining hand becomes floor(sqrt(x))\n  Both math wilds skip the next player\n\nCommands act for the current player and use visible indices.\nPress ? or Esc to return."
+                "* STAR CARNIVAL *\n\nTwo-player shortcuts\n  Left:    WASD select\n  Right:   hjkl select\n  Current: arrows select\n  Enter play   X draw   P pass\n  F filter     G auto +2/+8/+16\n  : command    Q quit\n\nLarge hands\n  Each player loads at most 200 concrete cards\n  At a boundary, press Down/Up 5 times to change random pages\n\nAuto plus\n  G plays the current player's longest legal sequence\n  Intermediate +16 cards bridge colors\n\nHand filter\n  F cycles All, +, -, and 0/7\n  Both hands use visible indices from 1\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank; WILD +16 changes color\n  WILD -32/-64 discard and share large hands\n  WILD x!: next hand becomes min(x!, x^7, 1M)\n  WILD sqrt: own remaining hand becomes floor(sqrt(x))\n  Both math wilds skip the next player\n\nCommands act for the current player and use visible indices.\nPress ? or Esc to return."
             }
             (Self::Chinese, PlayMode::Dual) => {
-                "* 星光嘉年华 *\n\n双人快捷键\n  左侧：WASD 选择手牌\n  右侧：hjkl 选择手牌\n  当前玩家：方向键选择手牌\n  Enter 出牌  X 摸牌  P 跳过\n  F 筛选      G 自动出 +2/+8/+16\n  : 输入命令  Q 退出\n\n自动出加牌\n  G 打出当前玩家的最长合法组合\n  中间的 +16 可用于切换颜色\n\n手牌筛选\n  F 循环：全部、+、-、0/7\n  双方可见牌均从 1 开始编号\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面；变色 +16 可改变颜色\n  变色 -32/-64 可处理并分发大量手牌\n  变色阶乘：下家变为 min(x!, x^7, 1M) 张\n  变色平方根：自己剩余手牌变为 floor(sqrt(x)) 张\n  两种数学牌都会跳过下家\n\n命令作用于当前玩家并使用可见序号。\n按 ? 或 Esc 返回。"
+                "* 星光嘉年华 *\n\n双人快捷键\n  左侧：WASD 选择手牌\n  右侧：hjkl 选择手牌\n  当前玩家：方向键选择手牌\n  Enter 出牌  X 摸牌  P 跳过\n  F 筛选      G 自动出 +2/+8/+16\n  : 输入命令  Q 退出\n\n大量手牌\n  每位玩家最多加载 200 张具体牌\n  在边界累计按 5 次下键/上键切换随机页\n\n自动出加牌\n  G 打出当前玩家的最长合法组合\n  中间的 +16 可用于切换颜色\n\n手牌筛选\n  F 循环：全部、+、-、0/7\n  双方可见牌均从 1 开始编号\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面；变色 +16 可改变颜色\n  变色 -32/-64 可处理并分发大量手牌\n  变色阶乘：下家变为 min(x!, x^7, 1M) 张\n  变色平方根：自己剩余手牌变为 floor(sqrt(x)) 张\n  两种数学牌都会跳过下家\n\n命令作用于当前玩家并使用可见序号。\n按 ? 或 Esc 返回。"
             }
         }
     }
@@ -162,6 +162,48 @@ impl Language {
             (_, HandFilter::Positive) => "+",
             (_, HandFilter::Negative) => "-",
             (_, HandFilter::SevenZero) => "0/7",
+        }
+    }
+
+    pub fn hand_page_summary(
+        self,
+        page: usize,
+        pages: usize,
+        loaded: usize,
+        total: usize,
+    ) -> String {
+        match self {
+            Self::English => format!("T:{total} P:{}/{} L:{loaded}", page + 1, pages),
+            Self::Chinese => format!("总:{total} 页:{}/{} 载:{loaded}", page + 1, pages),
+        }
+    }
+
+    pub fn page_press_status(self, up: bool, remaining: u8) -> String {
+        match (self, up) {
+            (Self::English, true) => {
+                format!("Press Up {remaining} more time(s) to regenerate the previous page")
+            }
+            (Self::English, false) => {
+                format!("Press Down {remaining} more time(s) to load the next random page")
+            }
+            (Self::Chinese, true) => format!("再按 {remaining} 次上键重新生成上一页"),
+            (Self::Chinese, false) => format!("再按 {remaining} 次下键加载下一随机页"),
+        }
+    }
+
+    pub fn page_loaded_status(self, page: usize, pages: usize) -> String {
+        match self {
+            Self::English => format!("Loaded random hand page {}/{pages}", page + 1),
+            Self::Chinese => format!("已加载随机手牌第 {}/{pages} 页", page + 1),
+        }
+    }
+
+    pub fn page_edge_status(self, up: bool) -> &'static str {
+        match (self, up) {
+            (Self::English, true) => "Already on the first hand page",
+            (Self::English, false) => "Already on the last hand page",
+            (Self::Chinese, true) => "已经是手牌第一页",
+            (Self::Chinese, false) => "已经是手牌最后一页",
         }
     }
 

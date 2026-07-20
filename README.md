@@ -63,6 +63,8 @@ UNO chooses its terminal frontend automatically. Local WezTerm sessions use the 
 
 The optional 130-card Holiday deck adds two `WILD x!` and two `WILD sqrt` cards. Factorial changes the next player's `x` cards to `min(x!, x^7, 1,000,000)` and skips them. Square Root randomly reduces your remaining hand to `floor(sqrt(x))` cards and also skips the next player. Both cards are wild and require a color choice.
 
+Large hands keep their exact total count but load at most 200 concrete cards at once. At the bottom of a hand page, press Down five times to load the next random page; at the top, press Up five times to regenerate the previous page. A regenerated page intentionally does not preserve the card identities shown there before. Human guarantee rules and AI difficulty guarantees/exclusions still apply to generated pages.
+
 ## Notice
 
 Release artifacts and installers are built with [cargo-dist](https://github.com/axodotdev/cargo-dist). The `uno-update` command is provided by [axoupdater](https://github.com/axodotdev/axoupdater).

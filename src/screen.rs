@@ -654,15 +654,22 @@ fn render_game(canvas: &mut Canvas, app: &App, images: bool) {
 }
 
 fn render_hand_panel(canvas: &mut Canvas, app: &App, player_index: usize, rect: Rect, title: &str) {
+    let page = app
+        .human_hand_page(player_index)
+        .map(|(page, pages, loaded, total)| {
+            app.language.hand_page_summary(page, pages, loaded, total)
+        })
+        .unwrap_or_default();
     canvas.border(
         rect,
         &format!("{title} [F:{}]", app.language.hand_filter(app.hand_filter)),
     );
+    canvas.text(rect.x + 2, rect.y + 1, &page, Style::fg(UiColor::Gray));
     let (first_index, hand) = app.visible_human_window(player_index);
     if hand.is_empty() {
         canvas.text(
             rect.x + 2,
-            rect.y + 2,
+            rect.y + 3,
             app.language.text(Message::NoMatchingCards),
             Style::fg(UiColor::Gray),
         );
@@ -681,13 +688,13 @@ fn render_hand_panel(canvas: &mut Canvas, app: &App, player_index: usize, rect: 
                 .any(|(index, _)| *index == app.selected_cards[player_index])
         })
         .unwrap_or(0);
-    let first_row = selected_row.saturating_sub(3);
-    for (row_index, row) in rows.into_iter().skip(first_row).take(4).enumerate() {
+    let first_row = selected_row.saturating_sub(2);
+    for (row_index, row) in rows.into_iter().skip(first_row).take(3).enumerate() {
         let mut x = rect.x + 1;
         for (index, entry) in row {
             canvas.text(
                 x,
-                rect.y + 1 + row_index as u16,
+                rect.y + 2 + row_index as u16,
                 &entry,
                 Style::fg(
                     hand[index - first_index]
@@ -844,6 +851,32 @@ mod tests {
         assert!(text.contains("No matching cards"));
         assert_eq!(game.images.len(), 1);
         assert_eq!(game.images[0].slot, ImageSlot::Discard);
+    }
+
+    #[test]
+    fn virtual_hand_panel_shows_total_page_and_loaded_counts() {
+        let mut app = App::with_graphics(Language::English, GraphicsChoice::Text);
+        app.setup.bot_count = 1;
+        app.setup.deck_variant = crate::core::DeckVariant::Standard;
+        app.start_match().unwrap();
+        let human = app.human_ids[0].clone();
+        app.game.as_mut().unwrap().set_test_turn(
+            &human,
+            vec![Card::new(Color::Red, crate::core::Rank::Number(5)); 401],
+            Card::new(Color::Red, crate::core::Rank::Number(1)),
+        );
+
+        let text = render(
+            &app,
+            GraphicsBackend::Text(FallbackReason::Manual),
+            Viewport {
+                columns: 80,
+                rows: 28,
+            },
+        )
+        .plain_text();
+
+        assert!(text.contains("T:401 P:1/3 L:200"));
     }
 
     #[test]

@@ -12,6 +12,7 @@ use rand::{Rng, RngCore, SeedableRng};
 pub const MIN_PLAYERS: usize = 2;
 pub const MAX_PLAYERS: usize = 5;
 pub const STARTING_HAND_SIZE: usize = 7;
+pub const HAND_BATCH_SIZE: usize = 200;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HouseRules {
@@ -208,6 +209,19 @@ struct Player {
     id: PlayerId,
     name: String,
     hand: Vec<Card>,
+    virtual_len: usize,
+    hand_page: usize,
+    materialized_received: usize,
+}
+
+impl Player {
+    fn hand_len(&self) -> usize {
+        self.hand.len().saturating_add(self.virtual_len)
+    }
+
+    fn page_count(&self) -> usize {
+        self.hand_len().div_ceil(HAND_BATCH_SIZE).max(1)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -501,7 +515,14 @@ impl Game {
                     state.received += 1;
                 }
             }
-            player_states.push(Player { id, name, hand });
+            player_states.push(Player {
+                id,
+                name,
+                hand,
+                virtual_len: 0,
+                hand_page: 0,
+                materialized_received: STARTING_HAND_SIZE,
+            });
         }
 
         let discard_index = deck
@@ -546,11 +567,66 @@ impl Game {
         Ok(&self.player(player)?.hand)
     }
 
+    pub fn hand_len_for(&self, player: &PlayerId) -> Result<usize, GameError> {
+        Ok(self.player(player)?.hand_len())
+    }
+
+    pub fn hand_page_for(&self, player: &PlayerId) -> Result<(usize, usize, usize), GameError> {
+        let player = self.player(player)?;
+        let pages = player.page_count();
+        Ok((player.hand_page.min(pages - 1), pages, player.hand.len()))
+    }
+
+    pub fn materialize_hand_page(
+        &mut self,
+        player: &PlayerId,
+        page: usize,
+    ) -> Result<(), GameError> {
+        let index = self.player_index(player)?;
+        let total = self.players[index].hand_len();
+        let page_count = total.div_ceil(HAND_BATCH_SIZE).max(1);
+        let page = page.min(page_count - 1);
+        let page_len = total
+            .saturating_sub(page.saturating_mul(HAND_BATCH_SIZE))
+            .min(HAND_BATCH_SIZE);
+        let rule = self.player_draw_states.get(player).map(|state| state.rule);
+        let received = self.players[index].materialized_received;
+        let cards =
+            generate_virtual_cards(self.deck_variant, rule, received, page_len, &mut self.rng);
+        self.players[index].hand = cards;
+        self.players[index].virtual_len = total.saturating_sub(page_len);
+        self.players[index].hand_page = page;
+        self.players[index].materialized_received = received.saturating_add(page_len);
+        Ok(())
+    }
+
+    pub fn materialize_next_batch_if_empty(
+        &mut self,
+        player: &PlayerId,
+    ) -> Result<bool, GameError> {
+        let owner = self.player(player)?;
+        if !owner.hand.is_empty() || owner.hand_len() == 0 {
+            return Ok(false);
+        }
+        let next_page = (owner.hand_page.min(owner.page_count() - 1) + 1) % owner.page_count();
+        self.materialize_hand_page(player, next_page)?;
+        Ok(true)
+    }
+
     #[cfg(test)]
-    pub(crate) fn set_test_turn(&mut self, player: &PlayerId, hand: Vec<Card>, discard_top: Card) {
+    pub(crate) fn set_test_turn(
+        &mut self,
+        player: &PlayerId,
+        mut hand: Vec<Card>,
+        discard_top: Card,
+    ) {
         let index = self.player_index(player).expect("test player exists");
         self.current_index = index;
+        let total = hand.len();
+        hand.truncate(HAND_BATCH_SIZE);
         self.players[index].hand = hand;
+        self.players[index].virtual_len = total.saturating_sub(HAND_BATCH_SIZE);
+        self.players[index].hand_page = 0;
         self.active_color = discard_top.color.expect("test discard is colored");
         self.discard_pile = vec![discard_top];
         self.phase = TurnPhase::AwaitingAction;
@@ -565,7 +641,7 @@ impl Game {
                 .map(|player| PublicPlayerState {
                     id: player.id.clone(),
                     name: player.name.clone(),
-                    hand_len: player.hand.len(),
+                    hand_len: player.hand_len(),
                 })
                 .collect(),
             discard_top: *self.discard_pile.last().expect("discard always has a top"),
@@ -584,17 +660,19 @@ impl Game {
             return Err(GameError::GameAlreadyWon);
         }
 
-        let hand = &self.player(player)?.hand;
+        let owner = self.player(player)?;
+        let hand = &owner.hand;
+        let hand_len = owner.hand_len();
         let playable: BTreeSet<Card> = match self.phase {
             TurnPhase::AwaitingAction => hand
                 .iter()
                 .copied()
                 .collect::<BTreeSet<_>>()
                 .into_iter()
-                .filter(|card| self.is_playable_for(hand, *card))
+                .filter(|card| self.is_playable_for(hand, hand_len, *card))
                 .collect(),
             TurnPhase::Drew(drawn) => self
-                .is_playable_for(hand, drawn)
+                .is_playable_for(hand, hand_len, drawn)
                 .then_some(drawn)
                 .into_iter()
                 .collect(),
@@ -731,7 +809,7 @@ impl Game {
         let drawn = self.draw_available_cards_to_player(&target, penalty);
         self.advance_turn(1);
 
-        let won = self.players[player_index].hand.is_empty();
+        let won = self.players[player_index].hand_len() == 0;
         let event = self.push_event(EventKind::PlusBatchPlayed {
             player: player.clone(),
             cards: plays.into_iter().map(|play| play.card).collect(),
@@ -786,7 +864,8 @@ impl Game {
         if !hand.contains(&card) {
             return Err(GameError::CardNotOwned(card));
         }
-        if !self.is_playable_for(hand, card) {
+        let total_len = self.players[player_index].hand_len();
+        if !self.is_playable_for(hand, total_len, card) {
             return Err(if matches!(card.rank, Rank::WildDrawFour) {
                 GameError::WildDrawFourNotAllowed
             } else {
@@ -856,7 +935,7 @@ impl Game {
         self.active_color = final_color;
         self.phase = TurnPhase::AwaitingAction;
 
-        let won = self.players[player_index].hand.is_empty();
+        let won = self.players[player_index].hand_len() == 0;
         let hand_effect = (!won)
             .then(|| self.apply_card_effect(top_card, swap_target))
             .flatten();
@@ -881,7 +960,7 @@ impl Game {
         }
         let card = self.draw_card_for(player)?;
         let player_index = self.player_index(player)?;
-        self.players[player_index].hand.push(card);
+        self.push_concrete_card(player_index, card);
         self.phase = TurnPhase::Drew(card);
         Ok(self.push_event(EventKind::CardDrawn {
             player: player.clone(),
@@ -967,10 +1046,10 @@ impl Game {
                 let target_index = self
                     .player_index(&target)
                     .expect("factorial target is always a player");
-                let before = self.players[target_index].hand.len();
+                let before = self.players[target_index].hand_len();
                 let after = factorial_hand_size(before);
                 self.draw_available_cards_to_player(&target, after.saturating_sub(before));
-                let after = self.players[target_index].hand.len();
+                let after = self.players[target_index].hand_len();
                 self.advance_turn(1);
                 Some(HandEffect::Factorial {
                     target,
@@ -980,16 +1059,27 @@ impl Game {
             }
             Rank::WildSquareRoot => {
                 let target = self.current_player().clone();
-                let before = self.players[self.current_index].hand.len();
+                let before = self.players[self.current_index].hand_len();
                 let after = before.isqrt();
                 self.players[self.current_index].hand.shuffle(&mut self.rng);
-                let discarded = self.players[self.current_index].hand.split_off(after);
+                let retained = after.min(HAND_BATCH_SIZE);
+                let concrete_retained = retained.min(self.players[self.current_index].hand.len());
+                let discarded = self.players[self.current_index]
+                    .hand
+                    .split_off(concrete_retained);
+                self.players[self.current_index].virtual_len =
+                    after.saturating_sub(self.players[self.current_index].hand.len());
+                self.players[self.current_index].hand_page = 0;
                 let effect_card = self
                     .discard_pile
                     .pop()
                     .expect("played square-root card is on the discard pile");
                 self.discard_pile.extend(discarded);
                 self.discard_pile.push(effect_card);
+                if after > self.players[self.current_index].hand.len() {
+                    self.materialize_hand_page(&target, 0)
+                        .expect("square-root target remains a player");
+                }
                 self.advance_turn(2);
                 Some(HandEffect::SquareRoot {
                     target,
@@ -1021,6 +1111,35 @@ impl Game {
 
     fn redistribute_and_discard(&mut self, processed_count: usize, distributed_count: usize) {
         let actor = self.current_index;
+        if self.players[actor].virtual_len > 0 {
+            let processed = processed_count.min(self.players[actor].hand_len());
+            let distributed = distributed_count.min(processed);
+            let actor_total = self.players[actor].hand_len().saturating_sub(processed);
+            self.players[actor].hand.shuffle(&mut self.rng);
+            self.players[actor]
+                .hand
+                .truncate(actor_total.min(HAND_BATCH_SIZE));
+            self.players[actor].virtual_len =
+                actor_total.saturating_sub(self.players[actor].hand.len());
+            self.players[actor].hand_page = 0;
+
+            let recipients = (1..self.players.len())
+                .map(|offset| (actor + offset) % self.players.len())
+                .collect::<Vec<_>>();
+            let actor_id = self.players[actor].id.clone();
+            let rule = self
+                .player_draw_states
+                .get(&actor_id)
+                .map(|state| state.rule);
+            let start = self.players[actor].materialized_received;
+            let cards =
+                generate_virtual_cards(self.deck_variant, rule, start, distributed, &mut self.rng);
+            self.players[actor].materialized_received = start.saturating_add(distributed);
+            for (index, card) in cards.into_iter().enumerate() {
+                self.push_concrete_card(recipients[index % recipients.len()], card);
+            }
+            return;
+        }
         let mut indices = (0..self.players[actor].hand.len()).collect::<Vec<_>>();
         indices.shuffle(&mut self.rng);
         indices.truncate(processed_count);
@@ -1042,9 +1161,7 @@ impl Game {
             .map(|offset| (actor + offset) % player_count)
             .collect::<Vec<_>>();
         for (index, card) in processed.drain(..distributed_count).enumerate() {
-            self.players[recipients[index % recipients.len()]]
-                .hand
-                .push(card);
+            self.push_concrete_card(recipients[index % recipients.len()], card);
         }
 
         let effect_card = self
@@ -1059,9 +1176,13 @@ impl Game {
         if first < second {
             let (left, right) = self.players.split_at_mut(second);
             std::mem::swap(&mut left[first].hand, &mut right[0].hand);
+            std::mem::swap(&mut left[first].virtual_len, &mut right[0].virtual_len);
+            std::mem::swap(&mut left[first].hand_page, &mut right[0].hand_page);
         } else {
             let (left, right) = self.players.split_at_mut(first);
             std::mem::swap(&mut right[0].hand, &mut left[second].hand);
+            std::mem::swap(&mut right[0].virtual_len, &mut left[second].virtual_len);
+            std::mem::swap(&mut right[0].hand_page, &mut left[second].hand_page);
         }
     }
 
@@ -1070,24 +1191,32 @@ impl Game {
         let hands = self
             .players
             .iter_mut()
-            .map(|player| std::mem::take(&mut player.hand))
+            .map(|player| {
+                (
+                    std::mem::take(&mut player.hand),
+                    std::mem::take(&mut player.virtual_len),
+                    std::mem::take(&mut player.hand_page),
+                )
+            })
             .collect::<Vec<_>>();
-        for (source, hand) in hands.into_iter().enumerate() {
+        for (source, (hand, virtual_len, hand_page)) in hands.into_iter().enumerate() {
             let target = match direction {
                 Direction::Clockwise => (source + 1) % player_count,
                 Direction::CounterClockwise => (source + player_count - 1) % player_count,
             };
             self.players[target].hand = hand;
+            self.players[target].virtual_len = virtual_len;
+            self.players[target].hand_page = hand_page;
         }
     }
 
-    fn is_playable_for(&self, hand: &[Card], card: Card) -> bool {
+    fn is_playable_for(&self, hand: &[Card], total_len: usize, card: Card) -> bool {
         let minimum_hand = match card.rank {
             Rank::WildDiscardThirtyTwo => Some(66),
             Rank::WildDiscardSixtyFour => Some(132),
             _ => None,
         };
-        if minimum_hand.is_some_and(|minimum| hand.len() < minimum) {
+        if minimum_hand.is_some_and(|minimum| total_len < minimum) {
             return false;
         }
         if matches!(card.rank, Rank::WildDrawFour)
@@ -1107,16 +1236,34 @@ impl Game {
         let index = self
             .player_index(player)
             .expect("penalty target is always a player");
-        self.players[index].hand.reserve(count);
+        let concrete_count =
+            count.min(HAND_BATCH_SIZE.saturating_sub(self.players[index].hand.len()));
         let mut drawn = 0;
-        for _ in 0..count {
+        for _ in 0..concrete_count {
             let Ok(card) = self.draw_card_for(player) else {
                 break;
             };
             self.players[index].hand.push(card);
             drawn += 1;
         }
+        let virtual_count = count.saturating_sub(drawn);
+        self.players[index].virtual_len = self.players[index]
+            .virtual_len
+            .saturating_add(virtual_count);
+        if let Some(state) = self.player_draw_states.get_mut(player) {
+            state.received = state.received.saturating_add(virtual_count);
+        }
+        drawn = drawn.saturating_add(virtual_count);
         drawn
+    }
+
+    fn push_concrete_card(&mut self, player_index: usize, card: Card) {
+        if self.players[player_index].hand.len() == HAND_BATCH_SIZE {
+            self.players[player_index].hand.pop();
+            self.players[player_index].virtual_len =
+                self.players[player_index].virtual_len.saturating_add(1);
+        }
+        self.players[player_index].hand.push(card);
     }
 
     fn draw_card(&mut self) -> Result<Card, GameError> {
@@ -1400,6 +1547,37 @@ fn draw_card_with_rule<R: Rng + ?Sized>(
         .rposition(|card| card_allowed_for_rule(rule, card))
         .ok_or(GameError::EmptyDrawPile)?;
     Ok(deck.swap_remove(index))
+}
+
+fn generate_virtual_cards<R: Rng + ?Sized>(
+    variant: DeckVariant,
+    rule: Option<PlayerDrawRule>,
+    received: usize,
+    count: usize,
+    rng: &mut R,
+) -> Vec<Card> {
+    let mut generated = Vec::with_capacity(count);
+    let effective_rule = rule.filter(|_| variant == DeckVariant::Holiday);
+    let all_types = deck(variant).into_iter().collect::<BTreeSet<_>>();
+    let allowed_types = all_types
+        .iter()
+        .copied()
+        .filter(|card| effective_rule.is_none_or(|rule| card_allowed_for_rule(rule, card)))
+        .collect::<Vec<_>>();
+    for offset in 0..count {
+        let guaranteed =
+            effective_rule.and_then(|rule| required_rank_for_rule(rule, received + offset));
+        let card = match guaranteed {
+            Some(Rank::DrawEight) => Card::new(
+                Color::ALL[rng.gen_range(0..Color::ALL.len())],
+                Rank::DrawEight,
+            ),
+            Some(rank) => Card::wild(rank),
+            None => allowed_types[rng.gen_range(0..allowed_types.len())],
+        };
+        generated.push(card);
+    }
+    generated
 }
 
 fn required_rank_for_rule(rule: PlayerDrawRule, received: usize) -> Option<Rank> {
@@ -1698,7 +1876,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(game.players[1].hand.len(), MAX_FACTORIAL_HAND_SIZE);
+        assert_eq!(game.players[1].hand_len(), MAX_FACTORIAL_HAND_SIZE);
+        assert_eq!(game.players[1].hand.len(), HAND_BATCH_SIZE);
         assert_eq!(game.current_index, 2);
     }
 
@@ -2283,7 +2462,7 @@ mod tests {
             vec![wild; 32],
             Card::new(Color::Red, Rank::Number(5)),
         );
-        let target_before = game.hand_for(&target).unwrap().len();
+        let target_before = game.hand_len_for(&target).unwrap();
 
         let mut plays = game.best_plus_batch(&current).unwrap();
 
@@ -2294,7 +2473,8 @@ mod tests {
 
         let event = game.apply_plus_batch(&current, plays).unwrap();
 
-        assert_eq!(game.hand_for(&target).unwrap().len(), target_before + 512);
+        assert_eq!(game.hand_len_for(&target).unwrap(), target_before + 512);
+        assert_eq!(game.hand_for(&target).unwrap().len(), HAND_BATCH_SIZE);
         assert!(matches!(
             event.kind,
             EventKind::PlusBatchPlayed {
@@ -3130,5 +3310,160 @@ mod tests {
             Action::Play { card, .. } if *card == repeated
         )));
         assert!(legal.contains(&Action::Draw));
+    }
+
+    #[test]
+    fn virtual_pages_keep_total_count_and_bound_concrete_cards() {
+        let mut game = Game::new_seeded(players(2), DeckVariant::Standard, 90).unwrap();
+        let current = game.current_player().clone();
+        game.set_test_turn(
+            &current,
+            vec![Card::new(Color::Red, Rank::Number(5)); 401],
+            Card::new(Color::Red, Rank::Number(1)),
+        );
+
+        assert_eq!(game.hand_len_for(&current), Ok(401));
+        assert_eq!(game.hand_page_for(&current), Ok((0, 3, 200)));
+
+        game.materialize_hand_page(&current, 2).unwrap();
+        assert_eq!(game.hand_len_for(&current), Ok(401));
+        assert_eq!(game.hand_page_for(&current), Ok((2, 3, 1)));
+
+        game.materialize_hand_page(&current, 0).unwrap();
+        assert_eq!(game.hand_page_for(&current), Ok((0, 3, 200)));
+    }
+
+    #[test]
+    fn virtual_generation_uses_rules_without_consuming_the_shared_pile() {
+        let bot = PlayerId::new("p0");
+        let mut easy = Game::new_seeded_with_draw_rules(
+            players(2),
+            DeckVariant::Holiday,
+            BTreeMap::from([(bot.clone(), PlayerDrawRule::ExcludeDrawEightAndSixteen)]),
+            91,
+        )
+        .unwrap();
+        easy.set_test_turn(
+            &bot,
+            vec![Card::new(Color::Red, Rank::Number(5)); 400],
+            Card::new(Color::Red, Rank::Number(1)),
+        );
+        let pile_len = easy.draw_pile.len();
+        easy.materialize_hand_page(&bot, 1).unwrap();
+        assert_eq!(easy.draw_pile.len(), pile_len);
+        assert!(easy.hand_for(&bot).unwrap().iter().all(|card| !matches!(
+            card.rank,
+            Rank::DrawEight
+                | Rank::WildSquareRoot
+                | Rank::WildDrawSixteen
+                | Rank::WildFactorial
+                | Rank::WildDiscardThirtyTwo
+                | Rank::WildDiscardSixtyFour
+        )));
+
+        let mut hard = Game::new_seeded_with_draw_rules(
+            players(2),
+            DeckVariant::Holiday,
+            BTreeMap::from([(bot.clone(), PlayerDrawRule::GuaranteeDrawEightPerSeven)]),
+            92,
+        )
+        .unwrap();
+        hard.set_test_turn(
+            &bot,
+            vec![Card::new(Color::Red, Rank::Number(5)); 400],
+            Card::new(Color::Red, Rank::Number(1)),
+        );
+        hard.materialize_hand_page(&bot, 1).unwrap();
+        assert_eq!(hard.hand_for(&bot).unwrap()[0].rank, Rank::DrawEight);
+        assert_eq!(hard.hand_for(&bot).unwrap()[1].rank, Rank::WildSquareRoot);
+    }
+
+    #[test]
+    fn a_drawn_card_stays_concrete_when_the_active_batch_is_full() {
+        let mut game = Game::new_seeded(players(2), DeckVariant::Standard, 93).unwrap();
+        let current = game.current_player().clone();
+        let drawn = Card::new(Color::Blue, Rank::Number(9));
+        game.set_test_turn(
+            &current,
+            vec![Card::new(Color::Red, Rank::Number(5)); 201],
+            Card::new(Color::Red, Rank::Number(1)),
+        );
+        game.draw_pile.push(drawn);
+
+        game.apply_action(&current, Action::Draw).unwrap();
+
+        assert_eq!(game.hand_len_for(&current), Ok(202));
+        assert_eq!(game.hand_for(&current).unwrap().len(), HAND_BATCH_SIZE);
+        assert!(game.hand_for(&current).unwrap().contains(&drawn));
+        assert_eq!(game.phase, TurnPhase::Drew(drawn));
+    }
+
+    #[test]
+    fn an_exhausted_active_batch_materializes_the_remaining_virtual_cards() {
+        let mut game = Game::new_seeded(players(2), DeckVariant::Standard, 96).unwrap();
+        let current = game.current_player().clone();
+        game.set_test_turn(
+            &current,
+            vec![Card::new(Color::Red, Rank::Number(5)); 201],
+            Card::new(Color::Red, Rank::Number(1)),
+        );
+        game.players[0].hand.clear();
+
+        assert_eq!(game.hand_len_for(&current), Ok(1));
+        assert_eq!(game.materialize_next_batch_if_empty(&current), Ok(true));
+        assert_eq!(game.hand_len_for(&current), Ok(1));
+        assert_eq!(game.hand_for(&current).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn virtual_square_root_and_discard_wilds_use_total_counts() {
+        let mut square = Game::new_seeded(players(3), DeckVariant::Holiday, 94).unwrap();
+        let actor = square.current_player().clone();
+        let mut hand = vec![Card::wild(Rank::WildSquareRoot)];
+        hand.extend(vec![Card::new(Color::Red, Rank::Number(5)); 999]);
+        square.set_test_turn(&actor, hand, Card::new(Color::Red, Rank::Number(1)));
+        square
+            .apply_action(
+                &actor,
+                Action::Play {
+                    card: Card::wild(Rank::WildSquareRoot),
+                    chosen_color: Some(Color::Blue),
+                    swap_target: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(square.hand_len_for(&actor), Ok(31));
+        assert_eq!(square.hand_for(&actor).unwrap().len(), 31);
+
+        let mut discard = Game::new_seeded(players(3), DeckVariant::Holiday, 95).unwrap();
+        let actor = discard.current_player().clone();
+        let recipients = [discard.players[1].id.clone(), discard.players[2].id.clone()];
+        let before = recipients
+            .iter()
+            .map(|id| discard.hand_len_for(id).unwrap())
+            .collect::<Vec<_>>();
+        let mut hand = vec![Card::wild(Rank::WildDiscardThirtyTwo)];
+        hand.extend(vec![Card::new(Color::Red, Rank::Number(5)); 300]);
+        discard.set_test_turn(&actor, hand, Card::new(Color::Red, Rank::Number(1)));
+        discard
+            .apply_action(
+                &actor,
+                Action::Play {
+                    card: Card::wild(Rank::WildDiscardThirtyTwo),
+                    chosen_color: Some(Color::Blue),
+                    swap_target: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(discard.hand_len_for(&actor), Ok(256));
+        for (id, previous) in recipients.iter().zip(before) {
+            assert_eq!(discard.hand_len_for(id), Ok(previous + 6));
+        }
+        assert!(
+            discard
+                .players
+                .iter()
+                .all(|player| player.hand.len() <= HAND_BATCH_SIZE)
+        );
     }
 }
