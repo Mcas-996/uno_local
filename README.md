@@ -61,6 +61,8 @@ Only a matching cargo-dist installation is removed. Package-manager, Cargo, deve
 
 UNO chooses its terminal frontend automatically. Local WezTerm sessions use the native Termwiz image path. Other local terminals use the universal text/Sixel frontend and enable images only after confirming Sixel support. SSH and tmux sessions always use text for predictable remote behavior. A terminal size of at least `70 × 26` is recommended.
 
+The optional 130-card Holiday deck adds two `WILD x!` and two `WILD sqrt` cards. Factorial changes the next player's `x` cards to `min(x!, x^7, 1,000,000)` and skips them. Square Root randomly reduces your remaining hand to `floor(sqrt(x))` cards and also skips the next player. Both cards are wild and require a color choice.
+
 ## Notice
 
 Release artifacts and installers are built with [cargo-dist](https://github.com/axodotdev/cargo-dist). The `uno-update` command is provided by [axoupdater](https://github.com/axodotdev/axoupdater).

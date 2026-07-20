@@ -74,8 +74,8 @@ impl Language {
             ),
             Message::Help => ("Help", "帮助"),
             Message::HelpBody => (
-                "* STAR CARNIVAL *\n\nShortcuts\n  Arrows/hjkl select  Enter play\n  F filter             D draw / P pass\n  G auto +2/+8/+16     : command  Q quit\n\nHand filter\n  F cycles All, +, -, and 0/7\n  Visible cards are renumbered from 1\n\nAuto plus\n  G plays the longest legal +2/+8/+16 sequence\n  Intermediate +16 cards bridge colors\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n  WILD -32: 66+ cards; discard 32, share 12\n  WILD -64: 132+ cards; discard 64, share 24\n\nCommands\n  play <visible index>  draw  pass\n  help                  new   quit\n\nPress ? or Esc to return.",
-                "* 星光嘉年华 *\n\n快捷键\n  方向键/hjkl 选择手牌  Enter 出牌\n  F 筛选               D 摸牌 / P 跳过\n  G 自动出 +2/+8/+16   : 输入命令  Q 退出\n\n手牌筛选\n  F 循环：全部、+、-、0/7\n  可见牌从 1 开始重新编号\n\n自动出加牌\n  G 打出最长合法 +2/+8/+16 组合\n  中间的 +16 可用于切换颜色\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n  变色 -32：66+ 张；弃 32 张，均分 12 张\n  变色 -64：132+ 张；弃 64 张，均分 24 张\n\n命令\n  play <可见序号>  draw  pass\n  help              new   quit\n\n按 ? 或 Esc 返回。",
+                "* STAR CARNIVAL *\n\nShortcuts\n  Arrows/hjkl select  Enter play\n  F filter             D draw / P pass\n  G auto +2/+8/+16     : command  Q quit\n\nHand filter\n  F cycles All, +, -, and 0/7\n  Visible cards are renumbered from 1\n\nAuto plus\n  G plays the longest legal +2/+8/+16 sequence\n  Intermediate +16 cards bridge colors\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank; WILD +16 changes color\n  WILD -32/-64 discard and share large hands\n  WILD x!: next hand becomes min(x!, x^7, 1M)\n  WILD sqrt: own remaining hand becomes floor(sqrt(x))\n  Both math wilds skip the next player\n\nCommands\n  play <visible index>  draw  pass\n  help                  new   quit\n\nPress ? or Esc to return.",
+                "* 星光嘉年华 *\n\n快捷键\n  方向键/hjkl 选择手牌  Enter 出牌\n  F 筛选               D 摸牌 / P 跳过\n  G 自动出 +2/+8/+16   : 输入命令  Q 退出\n\n手牌筛选\n  F 循环：全部、+、-、0/7\n  可见牌从 1 开始重新编号\n\n自动出加牌\n  G 打出最长合法 +2/+8/+16 组合\n  中间的 +16 可用于切换颜色\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面；变色 +16 可改变颜色\n  变色 -32/-64 可处理并分发大量手牌\n  变色阶乘：下家变为 min(x!, x^7, 1M) 张\n  变色平方根：自己剩余手牌变为 floor(sqrt(x)) 张\n  两种数学牌都会跳过下家\n\n命令\n  play <可见序号>  draw  pass\n  help              new   quit\n\n按 ? 或 Esc 返回。",
             ),
             Message::QuitTitle => ("Leave match?", "退出对局？"),
             Message::QuitBody => ("Y confirm · N/Esc cancel", "Y 确认 · N/Esc 取消"),
@@ -132,10 +132,10 @@ impl Language {
             (Self::English, PlayMode::Single) => self.text(Message::HelpBody),
             (Self::Chinese, PlayMode::Single) => self.text(Message::HelpBody),
             (Self::English, PlayMode::Dual) => {
-                "* STAR CARNIVAL *\n\nTwo-player shortcuts\n  Left:    WASD select\n  Right:   hjkl select\n  Current: arrows select\n  Enter play   X draw   P pass\n  F filter     G auto +2/+8/+16\n  : command    Q quit\n\nAuto plus\n  G plays the current player's longest legal sequence\n  Intermediate +16 cards bridge colors\n\nHand filter\n  F cycles All, +, -, and 0/7\n  Both hands use visible indices from 1\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n  WILD -32: 66+ cards; discard 32, share 12\n  WILD -64: 132+ cards; discard 64, share 24\n\nCommands act for the current player and use visible indices.\nPress ? or Esc to return."
+                "* STAR CARNIVAL *\n\nTwo-player shortcuts\n  Left:    WASD select\n  Right:   hjkl select\n  Current: arrows select\n  Enter play   X draw   P pass\n  F filter     G auto +2/+8/+16\n  : command    Q quit\n\nAuto plus\n  G plays the current player's longest legal sequence\n  Intermediate +16 cards bridge colors\n\nHand filter\n  F cycles All, +, -, and 0/7\n  Both hands use visible indices from 1\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank; WILD +16 changes color\n  WILD -32/-64 discard and share large hands\n  WILD x!: next hand becomes min(x!, x^7, 1M)\n  WILD sqrt: own remaining hand becomes floor(sqrt(x))\n  Both math wilds skip the next player\n\nCommands act for the current player and use visible indices.\nPress ? or Esc to return."
             }
             (Self::Chinese, PlayMode::Dual) => {
-                "* 星光嘉年华 *\n\n双人快捷键\n  左侧：WASD 选择手牌\n  右侧：hjkl 选择手牌\n  当前玩家：方向键选择手牌\n  Enter 出牌  X 摸牌  P 跳过\n  F 筛选      G 自动出 +2/+8/+16\n  : 输入命令  Q 退出\n\n自动出加牌\n  G 打出当前玩家的最长合法组合\n  中间的 +16 可用于切换颜色\n\n手牌筛选\n  F 循环：全部、+、-、0/7\n  双方可见牌均从 1 开始编号\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n  变色 -32：66+ 张；弃 32 张，均分 12 张\n  变色 -64：132+ 张；弃 64 张，均分 24 张\n\n命令作用于当前玩家并使用可见序号。\n按 ? 或 Esc 返回。"
+                "* 星光嘉年华 *\n\n双人快捷键\n  左侧：WASD 选择手牌\n  右侧：hjkl 选择手牌\n  当前玩家：方向键选择手牌\n  Enter 出牌  X 摸牌  P 跳过\n  F 筛选      G 自动出 +2/+8/+16\n  : 输入命令  Q 退出\n\n自动出加牌\n  G 打出当前玩家的最长合法组合\n  中间的 +16 可用于切换颜色\n\n手牌筛选\n  F 循环：全部、+、-、0/7\n  双方可见牌均从 1 开始编号\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面；变色 +16 可改变颜色\n  变色 -32/-64 可处理并分发大量手牌\n  变色阶乘：下家变为 min(x!, x^7, 1M) 张\n  变色平方根：自己剩余手牌变为 floor(sqrt(x)) 张\n  两种数学牌都会跳过下家\n\n命令作用于当前玩家并使用可见序号。\n按 ? 或 Esc 返回。"
             }
         }
     }
@@ -212,6 +212,23 @@ impl Language {
         }
     }
 
+    pub fn hand_transform_log(
+        self,
+        played: &str,
+        target: &str,
+        before: usize,
+        after: usize,
+    ) -> String {
+        match self {
+            Self::English => {
+                format!("{played}; {target}'s hand changed from {before} to {after} cards")
+            }
+            Self::Chinese => {
+                format!("{played}；{target} 的手牌由 {before} 张变为 {after} 张")
+            }
+        }
+    }
+
     pub fn plus_batch_log(
         self,
         player: &str,
@@ -248,9 +265,9 @@ impl Language {
     pub fn deck_variant(self, variant: DeckVariant) -> &'static str {
         match (self, variant) {
             (Self::English, DeckVariant::Standard) => "Standard 112",
-            (Self::English, DeckVariant::Holiday) => "Holiday 126",
+            (Self::English, DeckVariant::Holiday) => "Holiday 130",
             (Self::Chinese, DeckVariant::Standard) => "标准 112",
-            (Self::Chinese, DeckVariant::Holiday) => "节日 126",
+            (Self::Chinese, DeckVariant::Holiday) => "节日 130",
         }
     }
 
@@ -320,6 +337,8 @@ impl Language {
             (Self::English, Rank::WildDrawSixteen) => "< WILD +16 >".to_owned(),
             (Self::English, Rank::WildDiscardThirtyTwo) => "< WILD -32 >".to_owned(),
             (Self::English, Rank::WildDiscardSixtyFour) => "< WILD -64 >".to_owned(),
+            (Self::English, Rank::WildFactorial) => "< WILD x! >".to_owned(),
+            (Self::English, Rank::WildSquareRoot) => "< WILD sqrt >".to_owned(),
             (Self::Chinese, Rank::Skip) => "禁".to_owned(),
             (Self::Chinese, Rank::Reverse) => "转".to_owned(),
             (Self::Chinese, Rank::DrawTwo) => "+2".to_owned(),
@@ -329,6 +348,8 @@ impl Language {
             (Self::Chinese, Rank::WildDrawSixteen) => "< 变色 +16 >".to_owned(),
             (Self::Chinese, Rank::WildDiscardThirtyTwo) => "< 变色 -32 >".to_owned(),
             (Self::Chinese, Rank::WildDiscardSixtyFour) => "< 变色 -64 >".to_owned(),
+            (Self::Chinese, Rank::WildFactorial) => "< 变色 阶乘 >".to_owned(),
+            (Self::Chinese, Rank::WildSquareRoot) => "< 变色 平方根 >".to_owned(),
         };
         if card.is_wild() {
             rank
@@ -498,7 +519,7 @@ mod tests {
         );
         assert_eq!(
             Language::Chinese.deck_variant(DeckVariant::Holiday),
-            "节日 126"
+            "节日 130"
         );
         assert_eq!(
             Language::English.card(Card::wild(Rank::WildDiscardThirtyTwo)),
@@ -507,6 +528,18 @@ mod tests {
         assert_eq!(
             Language::Chinese.card(Card::wild(Rank::WildDiscardSixtyFour)),
             "< 变色 -64 >"
+        );
+        assert_eq!(
+            Language::English.card(Card::wild(Rank::WildFactorial)),
+            "< WILD x! >"
+        );
+        assert_eq!(
+            Language::Chinese.card(Card::wild(Rank::WildSquareRoot)),
+            "< 变色 平方根 >"
+        );
+        assert_eq!(
+            Language::Chinese.hand_transform_log("甲打出阶乘", "乙", 5, 120),
+            "甲打出阶乘；乙 的手牌由 5 张变为 120 张"
         );
         assert_eq!(
             Language::English.redistribute_log("P played WILD -32", 32, 12),

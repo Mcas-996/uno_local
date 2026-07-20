@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::str::FromStr;
 
-use crate::core::{Action, Card, Color, Direction, PublicGameState, Rank};
+use crate::core::{Action, Card, Color, Direction, PublicGameState, Rank, factorial_hand_size};
 use rand::Rng;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -169,14 +169,26 @@ fn choose_scored<R: Rng + ?Sized>(
 ) -> Card {
     let has_colored_play = playable.iter().any(|card| !card.is_wild());
     let next_hand = next_opponent_hand(state).unwrap_or(usize::MAX);
+    let mut color_counts = BTreeMap::<Color, i32>::new();
+    let mut card_counts = BTreeMap::<Card, i32>::new();
+    for card in hand {
+        if let Some(color) = card.color {
+            *color_counts.entry(color).or_default() += 1;
+        }
+        *card_counts.entry(*card).or_default() += 1;
+    }
     let mut best_score = i32::MIN;
     let mut best = Vec::new();
     for card in playable {
         let remaining_same_color = card.color.map_or(0, |color| {
-            hand.iter()
-                .filter(|candidate| candidate.color == Some(color) && **candidate != *card)
-                .count() as i32
+            color_counts.get(&color).copied().unwrap_or_default()
+                - card_counts.get(card).copied().unwrap_or_default()
         });
+        let post_play = hand.len().saturating_sub(1);
+        let square_root_removed = post_play.saturating_sub(post_play.isqrt()).min(1_000) as i32;
+        let factorial_growth = factorial_hand_size(next_hand)
+            .saturating_sub(next_hand)
+            .min(1_000) as i32;
         let mut score = remaining_same_color * 3
             + match card.rank {
                 Rank::Number(number) => i32::from(number) / 3,
@@ -188,6 +200,8 @@ fn choose_scored<R: Rng + ?Sized>(
                 Rank::WildDrawSixteen => 15,
                 Rank::WildDiscardThirtyTwo => 50,
                 Rank::WildDiscardSixtyFour => 100,
+                Rank::WildFactorial => 2_000 + factorial_growth,
+                Rank::WildSquareRoot => 1_000 + square_root_removed,
             };
         if card.is_wild() && has_colored_play {
             score -= 8;
@@ -197,6 +211,8 @@ fn choose_scored<R: Rng + ?Sized>(
                 Rank::WildDrawFour => 14,
                 Rank::WildDrawSixteen => 22,
                 Rank::WildDiscardThirtyTwo | Rank::WildDiscardSixtyFour => 0,
+                Rank::WildFactorial => 100,
+                Rank::WildSquareRoot => 0,
                 Rank::DrawEight => 18,
                 Rank::DrawTwo => 12,
                 Rank::Skip | Rank::Reverse => 10,
@@ -472,6 +488,51 @@ mod tests {
             choose_action(Difficulty::Hard, &state(20), &hand, &legal, &mut rng),
             Action::Play {
                 card: discard,
+                chosen_color: Some(Color::Blue),
+                swap_target: None,
+            }
+        );
+    }
+
+    #[test]
+    fn scored_ai_prefers_factorial_over_square_root_and_chooses_a_color() {
+        let factorial = Card::wild(Rank::WildFactorial);
+        let square_root = Card::wild(Rank::WildSquareRoot);
+        let hand = [
+            factorial,
+            square_root,
+            Card::new(Color::Green, Rank::Number(2)),
+            Card::new(Color::Green, Rank::Number(6)),
+        ];
+        let legal = [play(factorial), play(square_root), Action::Draw];
+        let mut rng = StdRng::seed_from_u64(81);
+
+        assert_eq!(
+            choose_action(Difficulty::Hard, &state(5), &hand, &legal, &mut rng),
+            Action::Play {
+                card: factorial,
+                chosen_color: Some(Color::Green),
+                swap_target: None,
+            }
+        );
+    }
+
+    #[test]
+    fn scored_ai_values_square_root_by_its_own_hand_reduction() {
+        let square_root = Card::wild(Rank::WildSquareRoot);
+        let draw_eight = Card::new(Color::Red, Rank::DrawEight);
+        let mut hand = vec![square_root, draw_eight];
+        hand.extend(std::iter::repeat_n(
+            Card::new(Color::Blue, Rank::Number(4)),
+            14,
+        ));
+        let legal = [play(square_root), play(draw_eight), Action::Draw];
+        let mut rng = StdRng::seed_from_u64(82);
+
+        assert_eq!(
+            choose_action(Difficulty::Normal, &state(12), &hand, &legal, &mut rng),
+            Action::Play {
+                card: square_root,
                 chosen_color: Some(Color::Blue),
                 swap_target: None,
             }

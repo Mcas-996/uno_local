@@ -65,7 +65,11 @@ pub fn generate_card_art(card: Card) -> DynamicImage {
         draw_block_symbol(&mut image, 144, 228, 17, 4, WHITE);
     } else {
         let label = rank_label(card.rank);
-        let scale = if label.len() >= 3 { 10 } else { 16 };
+        let scale = match label.len() {
+            4.. => 7,
+            3 => 10,
+            _ => 16,
+        };
         draw_centered_text(&mut image, label, 135, scale, ink);
         draw_text(&mut image, label, 22, 24, 5, WHITE);
         let corner_width = text_width(label, 5);
@@ -117,6 +121,8 @@ fn rank_label(rank: Rank) -> &'static str {
         Rank::WildDrawSixteen => "+16",
         Rank::WildDiscardThirtyTwo => "-32",
         Rank::WildDiscardSixtyFour => "-64",
+        Rank::WildFactorial => "x!",
+        Rank::WildSquareRoot => "SQRT",
     }
 }
 
@@ -311,6 +317,17 @@ fn glyph(character: char) -> [u8; 7] {
         ],
         '+' => [0, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0],
         '-' => [0, 0, 0, 0b11111, 0, 0, 0],
+        '!' => [0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0, 0b00100],
+        'x' => [0, 0, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001],
+        'S' => [
+            0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
+        ],
+        'Q' => [
+            0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101,
+        ],
+        'T' => [
+            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
+        ],
         'R' => [
             0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
         ],
@@ -339,6 +356,8 @@ mod tests {
             Rank::WildDrawSixteen,
             Rank::WildDiscardThirtyTwo,
             Rank::WildDiscardSixtyFour,
+            Rank::WildFactorial,
+            Rank::WildSquareRoot,
         ];
         for rank in ranks {
             let card = if matches!(
@@ -348,6 +367,8 @@ mod tests {
                     | Rank::WildDrawSixteen
                     | Rank::WildDiscardThirtyTwo
                     | Rank::WildDiscardSixtyFour
+                    | Rank::WildFactorial
+                    | Rank::WildSquareRoot
             ) {
                 Card::wild(rank)
             } else {
@@ -383,6 +404,16 @@ mod tests {
             let image = generate_card_art(Card::wild(rank)).into_rgba8();
             assert_eq!(*image.get_pixel(40, 135), WHITE);
             assert_eq!(*image.get_pixel(40, 110), BLACK);
+        }
+    }
+
+    #[test]
+    fn mathematical_wilds_use_distinct_ascii_labels() {
+        assert_eq!(rank_label(Rank::WildFactorial), "x!");
+        assert_eq!(rank_label(Rank::WildSquareRoot), "SQRT");
+        for rank in [Rank::WildFactorial, Rank::WildSquareRoot] {
+            let image = generate_card_art(Card::wild(rank)).into_rgba8();
+            assert_ne!(*image.get_pixel(90, 135), TRANSPARENT);
         }
     }
 

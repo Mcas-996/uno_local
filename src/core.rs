@@ -109,6 +109,8 @@ pub enum Rank {
     WildDrawSixteen,
     WildDiscardThirtyTwo,
     WildDiscardSixtyFour,
+    WildFactorial,
+    WildSquareRoot,
 }
 
 impl fmt::Display for Rank {
@@ -124,6 +126,8 @@ impl fmt::Display for Rank {
             Self::WildDrawSixteen => f.write_str("wild-draw-sixteen"),
             Self::WildDiscardThirtyTwo => f.write_str("wild-discard-thirty-two"),
             Self::WildDiscardSixtyFour => f.write_str("wild-discard-sixty-four"),
+            Self::WildFactorial => f.write_str("wild-factorial"),
+            Self::WildSquareRoot => f.write_str("wild-square-root"),
         }
     }
 }
@@ -154,6 +158,8 @@ impl Card {
                 | Rank::WildDrawSixteen
                 | Rank::WildDiscardThirtyTwo
                 | Rank::WildDiscardSixtyFour
+                | Rank::WildFactorial
+                | Rank::WildSquareRoot
         )
     }
 }
@@ -244,6 +250,16 @@ pub enum HandEffect {
     Redistribute {
         discarded: usize,
         distributed: usize,
+    },
+    Factorial {
+        target: PlayerId,
+        before: usize,
+        after: usize,
+    },
+    SquareRoot {
+        target: PlayerId,
+        before: usize,
+        after: usize,
     },
 }
 
@@ -569,10 +585,12 @@ impl Game {
         }
 
         let hand = &self.player(player)?.hand;
-        let playable: Vec<Card> = match self.phase {
+        let playable: BTreeSet<Card> = match self.phase {
             TurnPhase::AwaitingAction => hand
                 .iter()
                 .copied()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
                 .filter(|card| self.is_playable_for(hand, *card))
                 .collect(),
             TurnPhase::Drew(drawn) => self
@@ -943,6 +961,42 @@ impl Game {
                     distributed: 24,
                 })
             }
+            Rank::WildFactorial => {
+                self.advance_turn(1);
+                let target = self.current_player().clone();
+                let target_index = self
+                    .player_index(&target)
+                    .expect("factorial target is always a player");
+                let before = self.players[target_index].hand.len();
+                let after = factorial_hand_size(before);
+                self.draw_available_cards_to_player(&target, after.saturating_sub(before));
+                let after = self.players[target_index].hand.len();
+                self.advance_turn(1);
+                Some(HandEffect::Factorial {
+                    target,
+                    before,
+                    after,
+                })
+            }
+            Rank::WildSquareRoot => {
+                let target = self.current_player().clone();
+                let before = self.players[self.current_index].hand.len();
+                let after = before.isqrt();
+                self.players[self.current_index].hand.shuffle(&mut self.rng);
+                let discarded = self.players[self.current_index].hand.split_off(after);
+                let effect_card = self
+                    .discard_pile
+                    .pop()
+                    .expect("played square-root card is on the discard pile");
+                self.discard_pile.extend(discarded);
+                self.discard_pile.push(effect_card);
+                self.advance_turn(2);
+                Some(HandEffect::SquareRoot {
+                    target,
+                    before,
+                    after,
+                })
+            }
             Rank::Number(7) if self.house_rules.seven_zero => {
                 let target = swap_target.expect("validated seven target");
                 let target_index = self
@@ -1053,6 +1107,7 @@ impl Game {
         let index = self
             .player_index(player)
             .expect("penalty target is always a player");
+        self.players[index].hand.reserve(count);
         let mut drawn = 0;
         for _ in 0..count {
             let Ok(card) = self.draw_card_for(player) else {
@@ -1298,6 +1353,26 @@ fn runtime_refill_seed() -> [u8; 32] {
     seed
 }
 
+const MAX_FACTORIAL_HAND_SIZE: usize = 1_000_000;
+
+pub(crate) fn factorial_hand_size(cards: usize) -> usize {
+    let power_cap = (0..7).try_fold(1_usize, |value, _| {
+        value
+            .checked_mul(cards)
+            .filter(|result| *result < MAX_FACTORIAL_HAND_SIZE)
+            .ok_or(())
+    });
+    let limit = power_cap.unwrap_or(MAX_FACTORIAL_HAND_SIZE);
+    let mut factorial = 1_usize;
+    for factor in 2..=cards {
+        factorial = match factorial.checked_mul(factor) {
+            Some(result) if result < limit => result,
+            _ => return limit,
+        };
+    }
+    factorial.min(limit)
+}
+
 fn draw_card_with_rule<R: Rng + ?Sized>(
     deck: &mut Vec<Card>,
     rule: PlayerDrawRule,
@@ -1314,7 +1389,9 @@ fn draw_card_with_rule<R: Rng + ?Sized>(
                 Rank::DrawEight,
             ),
             Rank::WildDrawSixteen => Card::wild(Rank::WildDrawSixteen),
-            _ => unreachable!("only Holiday cards are guaranteed"),
+            Rank::WildFactorial => Card::wild(Rank::WildFactorial),
+            Rank::WildSquareRoot => Card::wild(Rank::WildSquareRoot),
+            _ => unreachable!("only Holiday tier cards are guaranteed"),
         });
     }
 
@@ -1330,42 +1407,65 @@ fn required_rank_for_rule(rule: PlayerDrawRule, received: usize) -> Option<Rank>
     let card_number = received + 1;
     match rule {
         PlayerDrawRule::GuaranteeDrawEightPerSeven if block_position == 0 => Some(Rank::DrawEight),
+        PlayerDrawRule::GuaranteeDrawEightPerSeven if block_position == 1 => {
+            Some(Rank::WildSquareRoot)
+        }
         PlayerDrawRule::TwoDrawEightAndOneSixteenPerSeven if block_position < 2 => {
             Some(Rank::DrawEight)
         }
-        PlayerDrawRule::TwoDrawEightAndOneSixteenPerSeven if block_position == 2 => {
+        PlayerDrawRule::TwoDrawEightAndOneSixteenPerSeven if block_position < 4 => {
+            Some(Rank::WildSquareRoot)
+        }
+        PlayerDrawRule::TwoDrawEightAndOneSixteenPerSeven if block_position == 4 => {
             Some(Rank::WildDrawSixteen)
+        }
+        PlayerDrawRule::TwoDrawEightAndOneSixteenPerSeven if block_position == 5 => {
+            Some(Rank::WildFactorial)
         }
         PlayerDrawRule::GuaranteeDrawEightPerFiveAndSixteenPerTen
             if card_number.is_multiple_of(10) =>
         {
             Some(Rank::WildDrawSixteen)
         }
+        PlayerDrawRule::GuaranteeDrawEightPerFiveAndSixteenPerTen if card_number % 10 == 9 => {
+            Some(Rank::WildFactorial)
+        }
         PlayerDrawRule::GuaranteeDrawEightPerFiveAndSixteenPerTen
             if card_number.is_multiple_of(5) =>
         {
             Some(Rank::DrawEight)
         }
+        PlayerDrawRule::GuaranteeDrawEightPerFiveAndSixteenPerTen if card_number % 10 == 4 => {
+            Some(Rank::WildSquareRoot)
+        }
         PlayerDrawRule::GuaranteeDrawEightPerTwenty if card_number.is_multiple_of(20) => {
             Some(Rank::DrawEight)
+        }
+        PlayerDrawRule::GuaranteeDrawEightPerTwenty if card_number % 20 == 19 => {
+            Some(Rank::WildSquareRoot)
         }
         _ => None,
     }
 }
 
 fn card_allowed_for_rule(rule: PlayerDrawRule, card: &Card) -> bool {
-    let high_wild = matches!(
+    let upper_or_discard_wild = matches!(
         card.rank,
-        Rank::WildDrawSixteen | Rank::WildDiscardThirtyTwo | Rank::WildDiscardSixtyFour
+        Rank::WildDrawSixteen
+            | Rank::WildDiscardThirtyTwo
+            | Rank::WildDiscardSixtyFour
+            | Rank::WildFactorial
     );
     match rule {
-        PlayerDrawRule::ExcludeDrawEightAndSixteen => card.rank != Rank::DrawEight && !high_wild,
-        PlayerDrawRule::ExcludeDrawSixteen => !high_wild,
+        PlayerDrawRule::ExcludeDrawEightAndSixteen => {
+            !matches!(card.rank, Rank::DrawEight | Rank::WildSquareRoot) && !upper_or_discard_wild
+        }
+        PlayerDrawRule::ExcludeDrawSixteen => !upper_or_discard_wild,
         PlayerDrawRule::GuaranteeDrawEightPerSeven
         | PlayerDrawRule::GuaranteeDrawEightPerFiveAndSixteenPerTen
         | PlayerDrawRule::GuaranteeDrawEightPerTwenty => true,
         PlayerDrawRule::TwoDrawEightAndOneSixteenPerSeven => {
-            card.rank != Rank::DrawEight && !high_wild
+            !matches!(card.rank, Rank::DrawEight | Rank::WildSquareRoot) && !upper_or_discard_wild
         }
     }
 }
@@ -1401,7 +1501,7 @@ pub fn standard_deck() -> Vec<Card> {
 
 pub fn holiday_deck() -> Vec<Card> {
     let mut deck = standard_deck();
-    deck.reserve(14);
+    deck.reserve(18);
     for color in Color::ALL {
         deck.push(Card::new(color, Rank::DrawEight));
         deck.push(Card::new(color, Rank::DrawEight));
@@ -1412,6 +1512,10 @@ pub fn holiday_deck() -> Vec<Card> {
     deck.push(Card::wild(Rank::WildDiscardThirtyTwo));
     deck.push(Card::wild(Rank::WildDiscardSixtyFour));
     deck.push(Card::wild(Rank::WildDiscardSixtyFour));
+    deck.push(Card::wild(Rank::WildFactorial));
+    deck.push(Card::wild(Rank::WildFactorial));
+    deck.push(Card::wild(Rank::WildSquareRoot));
+    deck.push(Card::wild(Rank::WildSquareRoot));
     deck
 }
 
@@ -1446,7 +1550,7 @@ mod tests {
     #[test]
     fn holiday_deck_has_exact_expansion_cards() {
         let deck = holiday_deck();
-        assert_eq!(deck.len(), 126);
+        assert_eq!(deck.len(), 130);
         for color in Color::ALL {
             assert_eq!(
                 deck.iter()
@@ -1479,6 +1583,201 @@ mod tests {
                 .count(),
             2
         );
+        assert_eq!(
+            deck.iter()
+                .filter(|card| **card == Card::wild(Rank::WildFactorial))
+                .count(),
+            2
+        );
+        assert_eq!(
+            deck.iter()
+                .filter(|card| **card == Card::wild(Rank::WildSquareRoot))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn factorial_size_uses_power_and_absolute_caps_without_overflow() {
+        assert_eq!(factorial_hand_size(0), 0);
+        assert_eq!(factorial_hand_size(1), 1);
+        assert_eq!(factorial_hand_size(5), 120);
+        assert_eq!(factorial_hand_size(8), 40_320);
+        assert_eq!(factorial_hand_size(9), 362_880);
+        assert_eq!(factorial_hand_size(10), 1_000_000);
+        assert_eq!(factorial_hand_size(usize::MAX), 1_000_000);
+    }
+
+    #[test]
+    fn factorial_grows_and_skips_the_next_hand_in_both_directions() {
+        for direction in [Direction::Clockwise, Direction::CounterClockwise] {
+            let mut game = Game::new_seeded(players(3), DeckVariant::Holiday, 42).unwrap();
+            let actor = game.players[0].id.clone();
+            game.current_index = 0;
+            game.direction = direction;
+            game.players[0].hand = vec![
+                Card::wild(Rank::WildFactorial),
+                Card::new(Color::Blue, Rank::Number(1)),
+            ];
+            let target_index = if direction == Direction::Clockwise {
+                1
+            } else {
+                2
+            };
+            game.players[target_index].hand = vec![
+                Card::new(Color::Red, Rank::Number(1)),
+                Card::new(Color::Red, Rank::Number(2)),
+                Card::new(Color::Red, Rank::Number(3)),
+                Card::new(Color::Red, Rank::Number(4)),
+                Card::new(Color::Red, Rank::Number(5)),
+            ];
+            game.discard_pile = vec![Card::new(Color::Yellow, Rank::Number(7))];
+            game.active_color = Color::Yellow;
+
+            let event = game
+                .apply_action(
+                    &actor,
+                    Action::Play {
+                        card: Card::wild(Rank::WildFactorial),
+                        chosen_color: Some(Color::Green),
+                        swap_target: None,
+                    },
+                )
+                .unwrap();
+
+            assert_eq!(game.players[target_index].hand.len(), 120);
+            assert_eq!(
+                game.current_index,
+                if direction == Direction::Clockwise {
+                    2
+                } else {
+                    1
+                }
+            );
+            assert!(matches!(
+                event.kind,
+                EventKind::CardPlayed {
+                    hand_effect: Some(HandEffect::Factorial {
+                        before: 5,
+                        after: 120,
+                        ..
+                    }),
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn factorial_materializes_the_one_million_card_cap() {
+        let mut game = Game::new_seeded(players(3), DeckVariant::Holiday, 43).unwrap();
+        let actor = game.players[0].id.clone();
+        game.current_index = 0;
+        game.players[0].hand = vec![
+            Card::wild(Rank::WildFactorial),
+            Card::new(Color::Blue, Rank::Number(1)),
+        ];
+        game.players[1].hand = (0..10)
+            .map(|number| Card::new(Color::Red, Rank::Number(number)))
+            .collect();
+        game.draw_pile = std::iter::repeat_n(
+            Card::new(Color::Yellow, Rank::Number(3)),
+            MAX_FACTORIAL_HAND_SIZE - 10,
+        )
+        .collect();
+        game.discard_pile = vec![Card::new(Color::Yellow, Rank::Number(7))];
+        game.active_color = Color::Yellow;
+
+        game.apply_action(
+            &actor,
+            Action::Play {
+                card: Card::wild(Rank::WildFactorial),
+                chosen_color: Some(Color::Green),
+                swap_target: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(game.players[1].hand.len(), MAX_FACTORIAL_HAND_SIZE);
+        assert_eq!(game.current_index, 2);
+    }
+
+    #[test]
+    fn square_root_randomly_reduces_the_actor_and_keeps_the_wild_on_top() {
+        let mut first = Game::new_seeded(players(3), DeckVariant::Holiday, 77).unwrap();
+        let mut second = Game::new_seeded(players(3), DeckVariant::Holiday, 77).unwrap();
+        for game in [&mut first, &mut second] {
+            let actor = game.players[0].id.clone();
+            game.current_index = 0;
+            game.players[0].hand = std::iter::once(Card::wild(Rank::WildSquareRoot))
+                .chain((0..10).map(|number| Card::new(Color::Red, Rank::Number(number))))
+                .collect();
+            game.discard_pile = vec![Card::new(Color::Yellow, Rank::Number(7))];
+            game.active_color = Color::Yellow;
+            let event = game
+                .apply_action(
+                    &actor,
+                    Action::Play {
+                        card: Card::wild(Rank::WildSquareRoot),
+                        chosen_color: Some(Color::Blue),
+                        swap_target: None,
+                    },
+                )
+                .unwrap();
+            assert_eq!(game.players[0].hand.len(), 3);
+            assert_eq!(game.current_index, 2);
+            assert_eq!(
+                game.discard_pile.last(),
+                Some(&Card::wild(Rank::WildSquareRoot))
+            );
+            assert!(matches!(
+                event.kind,
+                EventKind::CardPlayed {
+                    hand_effect: Some(HandEffect::SquareRoot {
+                        before: 10,
+                        after: 3,
+                        ..
+                    }),
+                    ..
+                }
+            ));
+        }
+        assert_eq!(first.players[0].hand, second.players[0].hand);
+        assert_eq!(first.discard_pile, second.discard_pile);
+    }
+
+    #[test]
+    fn final_mathematical_wild_wins_without_transforming_a_hand() {
+        for rank in [Rank::WildFactorial, Rank::WildSquareRoot] {
+            let mut game = Game::new_seeded(players(2), DeckVariant::Holiday, 88).unwrap();
+            let actor = game.players[0].id.clone();
+            game.current_index = 0;
+            game.players[0].hand = vec![Card::wild(rank)];
+            let target_before = game.players[1].hand.clone();
+            game.discard_pile = vec![Card::new(Color::Red, Rank::Number(4))];
+            game.active_color = Color::Red;
+
+            let event = game
+                .apply_action(
+                    &actor,
+                    Action::Play {
+                        card: Card::wild(rank),
+                        chosen_color: Some(Color::Blue),
+                        swap_target: None,
+                    },
+                )
+                .unwrap();
+
+            assert!(matches!(
+                event.kind,
+                EventKind::CardPlayed {
+                    hand_effect: None,
+                    ..
+                }
+            ));
+            assert_eq!(game.winner, Some(actor));
+            assert_eq!(game.players[1].hand, target_before);
+        }
     }
 
     #[test]
@@ -1512,7 +1811,7 @@ mod tests {
     }
 
     #[test]
-    fn easy_ai_never_receives_draw_eight_or_sixteen() {
+    fn easy_ai_never_receives_either_guarantee_tier() {
         let mut game = Game::new_seeded_with_draw_rules(
             players(2),
             DeckVariant::Holiday,
@@ -1527,6 +1826,8 @@ mod tests {
                 | Rank::WildDrawSixteen
                 | Rank::WildDiscardThirtyTwo
                 | Rank::WildDiscardSixtyFour
+                | Rank::WildFactorial
+                | Rank::WildSquareRoot
         )));
         for _ in 0..30 {
             let card = game.draw_card_for(&bot).unwrap();
@@ -1536,12 +1837,14 @@ mod tests {
                     | Rank::WildDrawSixteen
                     | Rank::WildDiscardThirtyTwo
                     | Rank::WildDiscardSixtyFour
+                    | Rank::WildFactorial
+                    | Rank::WildSquareRoot
             ));
         }
     }
 
     #[test]
-    fn normal_ai_never_receives_draw_sixteen() {
+    fn normal_ai_excludes_sixteen_factorial_and_discard_wilds_but_allows_square_root() {
         let mut game = Game::new_seeded_with_draw_rules(
             players(2),
             DeckVariant::Holiday,
@@ -1552,18 +1855,26 @@ mod tests {
         let bot = PlayerId::new("p1");
         assert!(game.hand_for(&bot).unwrap().iter().all(|card| !matches!(
             card.rank,
-            Rank::WildDrawSixteen | Rank::WildDiscardThirtyTwo | Rank::WildDiscardSixtyFour
+            Rank::WildDrawSixteen
+                | Rank::WildDiscardThirtyTwo
+                | Rank::WildDiscardSixtyFour
+                | Rank::WildFactorial
         )));
+        game.draw_pile = vec![Card::wild(Rank::WildSquareRoot)];
+        assert_eq!(game.draw_card_for(&bot).unwrap().rank, Rank::WildSquareRoot);
         for _ in 0..30 {
             assert!(!matches!(
                 game.draw_card_for(&bot).unwrap().rank,
-                Rank::WildDrawSixteen | Rank::WildDiscardThirtyTwo | Rank::WildDiscardSixtyFour
+                Rank::WildDrawSixteen
+                    | Rank::WildDiscardThirtyTwo
+                    | Rank::WildDiscardSixtyFour
+                    | Rank::WildFactorial
             ));
         }
     }
 
     #[test]
-    fn hard_ai_receives_a_draw_eight_in_each_initial_hand() {
+    fn hard_ai_receives_draw_eight_and_square_root_in_each_initial_hand() {
         let game = Game::new_seeded_with_draw_rules(
             players(5),
             DeckVariant::Holiday,
@@ -1577,6 +1888,12 @@ mod tests {
                     .unwrap()
                     .iter()
                     .any(|card| card.rank == Rank::DrawEight)
+            );
+            assert!(
+                game.hand_for(&PlayerId::new(format!("p{index}")))
+                    .unwrap()
+                    .iter()
+                    .any(|card| card.rank == Rank::WildSquareRoot)
             );
         }
     }
@@ -1605,6 +1922,18 @@ mod tests {
                     .count(),
                 1
             );
+            assert_eq!(
+                hand.iter()
+                    .filter(|card| card.rank == Rank::WildSquareRoot)
+                    .count(),
+                2
+            );
+            assert_eq!(
+                hand.iter()
+                    .filter(|card| card.rank == Rank::WildFactorial)
+                    .count(),
+                1
+            );
         }
 
         let bot = PlayerId::new("p1");
@@ -1623,10 +1952,24 @@ mod tests {
                 .count(),
             1
         );
+        assert_eq!(
+            next_seven
+                .iter()
+                .filter(|card| card.rank == Rank::WildSquareRoot)
+                .count(),
+            2
+        );
+        assert_eq!(
+            next_seven
+                .iter()
+                .filter(|card| card.rank == Rank::WildFactorial)
+                .count(),
+            1
+        );
     }
 
     #[test]
-    fn easy_human_gets_draw_eight_and_sixteen_on_their_guaranteed_cards() {
+    fn easy_human_gets_both_members_of_each_guaranteed_tier() {
         let human = PlayerId::new("p0");
         let rules = BTreeMap::from([(
             human.clone(),
@@ -1635,17 +1978,21 @@ mod tests {
         let mut game =
             Game::new_seeded_with_draw_rules(players(2), DeckVariant::Holiday, rules, 15).unwrap();
 
+        assert_eq!(game.hand_for(&human).unwrap()[3].rank, Rank::WildSquareRoot);
         assert_eq!(game.hand_for(&human).unwrap()[4].rank, Rank::DrawEight);
         let cards: Vec<Card> = (8..=20)
             .map(|_| game.draw_card_for(&human).unwrap())
             .collect();
+        assert_eq!(cards[1].rank, Rank::WildFactorial);
         assert_eq!(cards[2].rank, Rank::WildDrawSixteen);
+        assert_eq!(cards[6].rank, Rank::WildSquareRoot);
         assert_eq!(cards[7].rank, Rank::DrawEight);
+        assert_eq!(cards[11].rank, Rank::WildFactorial);
         assert_eq!(cards[12].rank, Rank::WildDrawSixteen);
     }
 
     #[test]
-    fn normal_human_gets_draw_eight_on_every_twentieth_card() {
+    fn normal_human_gets_square_root_and_draw_eight_every_twenty_cards() {
         let human = PlayerId::new("p0");
         let rules = BTreeMap::from([(human.clone(), PlayerDrawRule::GuaranteeDrawEightPerTwenty)]);
         let mut game =
@@ -1654,7 +2001,9 @@ mod tests {
         let cards: Vec<Card> = (8..=40)
             .map(|_| game.draw_card_for(&human).unwrap())
             .collect();
+        assert_eq!(cards[11].rank, Rank::WildSquareRoot);
         assert_eq!(cards[12].rank, Rank::DrawEight);
+        assert_eq!(cards[31].rank, Rank::WildSquareRoot);
         assert_eq!(cards[32].rank, Rank::DrawEight);
     }
 
@@ -1704,6 +2053,8 @@ mod tests {
                     | Rank::WildDrawSixteen
                     | Rank::WildDiscardThirtyTwo
                     | Rank::WildDiscardSixtyFour
+                    | Rank::WildFactorial
+                    | Rank::WildSquareRoot
             ));
         }
     }
@@ -2724,6 +3075,8 @@ mod tests {
                     | Rank::WildDrawSixteen
                     | Rank::WildDiscardThirtyTwo
                     | Rank::WildDiscardSixtyFour
+                    | Rank::WildFactorial
+                    | Rank::WildSquareRoot
             ));
         }
     }
@@ -2756,5 +3109,26 @@ mod tests {
     fn public_state_hides_card_identities() {
         let game = game();
         assert_eq!(game.public_state().players[0].hand_len, STARTING_HAND_SIZE);
+    }
+
+    #[test]
+    fn legal_actions_are_bounded_for_a_million_duplicate_cards() {
+        let mut game = game();
+        let current = game.current_player().clone();
+        let repeated = Card::new(Color::Red, Rank::Number(5));
+        game.set_test_turn(
+            &current,
+            std::iter::repeat_n(repeated, MAX_FACTORIAL_HAND_SIZE).collect(),
+            Card::new(Color::Red, Rank::Number(1)),
+        );
+
+        let legal = game.legal_actions(&current).unwrap();
+
+        assert_eq!(legal.len(), 2);
+        assert!(legal.iter().any(|action| matches!(
+            action,
+            Action::Play { card, .. } if *card == repeated
+        )));
+        assert!(legal.contains(&Action::Draw));
     }
 }

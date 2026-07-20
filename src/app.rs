@@ -2,6 +2,7 @@
 //!
 //! Setup, input, local turns, and Holiday color selection.
 
+use std::cell::{Ref, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -18,6 +19,13 @@ use crate::i18n::{Language, Message};
 
 const AI_DELAY: Duration = Duration::from_secs(1);
 const MAX_LOGS: usize = 8;
+const HAND_WINDOW_RADIUS: usize = 128;
+
+#[derive(Default)]
+struct VisibleHandCache {
+    indices: [Vec<usize>; 2],
+    valid: [bool; 2],
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Screen {
@@ -151,6 +159,7 @@ pub struct App {
     previous_screen: Screen,
     ai_deadline: Instant,
     ai_rng: StdRng,
+    visible_hand_cache: RefCell<VisibleHandCache>,
 }
 
 impl App {
@@ -182,6 +191,7 @@ impl App {
             previous_screen: Screen::Setup,
             ai_deadline: Instant::now(),
             ai_rng: StdRng::from_entropy(),
+            visible_hand_cache: RefCell::new(VisibleHandCache::default()),
         }
     }
 
@@ -236,6 +246,7 @@ impl App {
         self.screen = Screen::Game;
         self.selected_cards = [0; 2];
         self.hand_filter = HandFilter::All;
+        self.invalidate_visible_hands();
         self.command_mode = false;
         self.pending_color = None;
         self.pending_seven = None;
@@ -437,6 +448,7 @@ impl App {
             KeyCode::Char('f' | 'F') => {
                 self.hand_filter = self.hand_filter.next();
                 self.selected_cards = [0; 2];
+                self.invalidate_visible_hands();
             }
             KeyCode::Char('g' | 'G') => self.play_best_plus_batch(),
             KeyCode::Char('d' | 'D') if self.setup.mode == PlayMode::Single => {
@@ -492,9 +504,11 @@ impl App {
         match code {
             KeyCode::Up | KeyCode::Down => {
                 let row_delta = if code == KeyCode::Up { -1 } else { 1 };
+                let (first_index, hand) = self.visible_human_window(player_index);
                 self.selected_cards[player_index] = crate::view::adjacent_hand_card(
                     self.language,
-                    &self.visible_human_hand(player_index),
+                    &hand,
+                    first_index,
                     self.selected_cards[player_index],
                     hand_width,
                     row_delta,
@@ -505,7 +519,7 @@ impl App {
                     self.selected_cards[player_index].saturating_sub(1);
             }
             KeyCode::Right => {
-                let len = self.visible_human_hand(player_index).len();
+                let len = self.visible_human_hand_len(player_index);
                 if len > 0 {
                     self.selected_cards[player_index] =
                         (self.selected_cards[player_index] + 1).min(len - 1);
@@ -697,10 +711,7 @@ impl App {
     }
 
     fn play_selected(&mut self, player_index: usize) {
-        let Some(card) = self
-            .visible_human_hand(player_index)
-            .get(self.selected_cards[player_index])
-            .copied()
+        let Some(card) = self.visible_human_card(player_index, self.selected_cards[player_index])
         else {
             self.status = self.language.text(Message::InvalidCardIndex).to_owned();
             return;
@@ -810,17 +821,14 @@ impl App {
             let game = self.game.as_ref().expect("game screen has game");
             let player = game.current_player().clone();
             let state = game.public_state();
-            let hand = game
-                .hand_for(&player)
-                .expect("current player is in game")
-                .to_vec();
+            let hand = game.hand_for(&player).expect("current player is in game");
             let legal = game
                 .legal_actions(&player)
                 .expect("current player has legal actions");
             let action = choose_action(
                 self.setup.difficulty,
                 &state,
-                &hand,
+                hand,
                 &legal,
                 &mut self.ai_rng,
             );
@@ -838,6 +846,7 @@ impl App {
     }
 
     fn after_event(&mut self, event: GameEvent) {
+        self.invalidate_visible_hands();
         let state = self.game.as_ref().expect("game exists").public_state();
         let name = state
             .players
@@ -879,6 +888,24 @@ impl App {
                     }) => self
                         .language
                         .redistribute_log(&played, discarded, distributed),
+                    Some(HandEffect::Factorial {
+                        target,
+                        before,
+                        after,
+                    })
+                    | Some(HandEffect::SquareRoot {
+                        target,
+                        before,
+                        after,
+                    }) => {
+                        let target_name = state
+                            .players
+                            .iter()
+                            .find(|player| player.id == target)
+                            .map_or(target.0.as_str(), |player| player.name.as_str());
+                        self.language
+                            .hand_transform_log(&played, target_name, before, after)
+                    }
                     None => played,
                 }
             }
@@ -914,7 +941,7 @@ impl App {
             self.status = line;
         }
         for player_index in 0..self.setup.mode.human_count() {
-            let hand_len = self.visible_human_hand(player_index).len();
+            let hand_len = self.visible_human_hand_len(player_index);
             self.selected_cards[player_index] =
                 self.selected_cards[player_index].min(hand_len.saturating_sub(1));
         }
@@ -931,7 +958,7 @@ impl App {
                 let Some(player_index) = self.current_human_index() else {
                     return;
                 };
-                if index == 0 || index > self.visible_human_hand(player_index).len() {
+                if index == 0 || index > self.visible_human_hand_len(player_index) {
                     self.status = self.language.text(Message::InvalidCardIndex).to_owned();
                     return;
                 }
@@ -974,13 +1001,60 @@ impl App {
             .and_then(|game| game.hand_for(&self.human_ids[player_index]).ok())
     }
 
+    #[cfg(test)]
     pub fn visible_human_hand(&self, player_index: usize) -> Vec<Card> {
-        self.human_hand(player_index)
-            .unwrap_or_default()
+        let indices = self.visible_hand_indices(player_index);
+        let hand = self.human_hand(player_index).unwrap_or_default();
+        indices.iter().map(|index| hand[*index]).collect()
+    }
+
+    pub fn visible_human_hand_len(&self, player_index: usize) -> usize {
+        self.visible_hand_indices(player_index).len()
+    }
+
+    pub fn visible_human_card(&self, player_index: usize, visible_index: usize) -> Option<Card> {
+        let hand_index = self
+            .visible_hand_indices(player_index)
+            .get(visible_index)
+            .copied()?;
+        self.human_hand(player_index)?.get(hand_index).copied()
+    }
+
+    pub fn visible_human_window(&self, player_index: usize) -> (usize, Vec<Card>) {
+        let indices = self.visible_hand_indices(player_index);
+        let selected = self.selected_cards[player_index].min(indices.len().saturating_sub(1));
+        let start = selected.saturating_sub(HAND_WINDOW_RADIUS);
+        let end = indices
+            .len()
+            .min(selected.saturating_add(HAND_WINDOW_RADIUS + 1));
+        let hand = self.human_hand(player_index).unwrap_or_default();
+        let cards = indices[start..end]
             .iter()
-            .copied()
-            .filter(|card| self.hand_filter.matches(*card))
-            .collect()
+            .map(|index| hand[*index])
+            .collect();
+        (start, cards)
+    }
+
+    fn visible_hand_indices(&self, player_index: usize) -> Ref<'_, Vec<usize>> {
+        if !self.visible_hand_cache.borrow().valid[player_index] {
+            let indices = self
+                .human_hand(player_index)
+                .unwrap_or_default()
+                .iter()
+                .enumerate()
+                .filter_map(|(index, card)| self.hand_filter.matches(*card).then_some(index))
+                .collect();
+            let mut cache = self.visible_hand_cache.borrow_mut();
+            cache.indices[player_index] = indices;
+            cache.valid[player_index] = true;
+        }
+        Ref::map(self.visible_hand_cache.borrow(), |cache| {
+            &cache.indices[player_index]
+        })
+    }
+
+    fn invalidate_visible_hands(&self) {
+        self.visible_hand_cache.borrow_mut().valid = [false; 2];
     }
 
     pub fn current_human_index(&self) -> Option<usize> {
@@ -992,9 +1066,7 @@ impl App {
 
     pub fn selected_human_card(&self) -> Option<Card> {
         let player_index = self.current_human_index()?;
-        self.visible_human_hand(player_index)
-            .get(self.selected_cards[player_index])
-            .copied()
+        self.visible_human_card(player_index, self.selected_cards[player_index])
     }
 
     pub fn is_human(&self, player: &PlayerId) -> bool {
@@ -1191,6 +1263,31 @@ mod tests {
         assert!(!HandFilter::Positive.matches(colored(Rank::Number(7))));
         assert!(!HandFilter::Negative.matches(Card::wild(Rank::WildDrawSixteen)));
         assert!(!HandFilter::SevenZero.matches(colored(Rank::Number(1))));
+    }
+
+    #[test]
+    fn million_card_hand_uses_a_bounded_global_index_window() {
+        let mut app = App::new(Language::English);
+        app.setup.bot_count = 1;
+        app.setup.deck_variant = DeckVariant::Standard;
+        app.start_match().unwrap();
+        let human = app.human_ids[0].clone();
+        app.game.as_mut().unwrap().set_test_turn(
+            &human,
+            std::iter::repeat_n(Card::new(Color::Red, Rank::Number(5)), 1_000_000).collect(),
+            Card::new(Color::Red, Rank::Number(1)),
+        );
+        app.invalidate_visible_hands();
+        app.selected_cards[0] = 500_000;
+
+        assert_eq!(app.visible_human_hand_len(0), 1_000_000);
+        let (first_index, window) = app.visible_human_window(0);
+        assert_eq!(first_index, 499_872);
+        assert_eq!(window.len(), 257);
+        assert_eq!(
+            app.visible_human_card(0, 500_000),
+            Some(Card::new(Color::Red, Rank::Number(5)))
+        );
     }
 
     #[test]

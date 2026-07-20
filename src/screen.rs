@@ -6,7 +6,7 @@ use crate::app::{App, PlayMode, Screen};
 use crate::core::{Card, Color};
 use crate::frontend::{GraphicsBackend, GraphicsChoice, Viewport};
 use crate::i18n::Message;
-use crate::view::{AppView, MIN_COLUMNS, MIN_ROWS, wrap_hand};
+use crate::view::{AppView, MIN_COLUMNS, MIN_ROWS, wrap_hand_indexed};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum UiColor {
@@ -658,7 +658,7 @@ fn render_hand_panel(canvas: &mut Canvas, app: &App, player_index: usize, rect: 
         rect,
         &format!("{title} [F:{}]", app.language.hand_filter(app.hand_filter)),
     );
-    let hand = app.visible_human_hand(player_index);
+    let (first_index, hand) = app.visible_human_window(player_index);
     if hand.is_empty() {
         canvas.text(
             rect.x + 2,
@@ -668,9 +668,10 @@ fn render_hand_panel(canvas: &mut Canvas, app: &App, player_index: usize, rect: 
         );
         return;
     }
-    let rows = wrap_hand(
+    let rows = wrap_hand_indexed(
         app.language,
         &hand,
+        first_index,
         rect.width.saturating_sub(2).max(1) as usize,
     );
     let selected_row = rows
@@ -688,8 +689,12 @@ fn render_hand_panel(canvas: &mut Canvas, app: &App, player_index: usize, rect: 
                 x,
                 rect.y + 1 + row_index as u16,
                 &entry,
-                Style::fg(hand[index].color.map_or(UiColor::Magenta, color))
-                    .selected(index == app.selected_cards[player_index]),
+                Style::fg(
+                    hand[index - first_index]
+                        .color
+                        .map_or(UiColor::Magenta, color),
+                )
+                .selected(index == app.selected_cards[player_index]),
             );
             x += UnicodeWidthStr::width(entry.as_str()) as u16;
         }

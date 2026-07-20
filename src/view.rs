@@ -36,11 +36,17 @@ pub fn card_entry(language: Language, index: usize, card: Card) -> String {
     format!(" {}:[{}]  ", index + 1, language.card(card))
 }
 
-pub fn wrap_hand(language: Language, hand: &[Card], width: usize) -> Vec<Vec<(usize, String)>> {
+pub fn wrap_hand_indexed(
+    language: Language,
+    hand: &[Card],
+    first_index: usize,
+    width: usize,
+) -> Vec<Vec<(usize, String)>> {
     let mut rows = Vec::<Vec<(usize, String)>>::new();
     let mut row = Vec::new();
     let mut used = 0;
-    for (index, card) in hand.iter().copied().enumerate() {
+    for (offset, card) in hand.iter().copied().enumerate() {
+        let index = first_index + offset;
         let entry = card_entry(language, index, card);
         let entry_width = UnicodeWidthStr::width(entry.as_str());
         if !row.is_empty() && used + entry_width > width {
@@ -60,11 +66,12 @@ pub fn wrap_hand(language: Language, hand: &[Card], width: usize) -> Vec<Vec<(us
 pub fn adjacent_hand_card(
     language: Language,
     hand: &[Card],
+    first_index: usize,
     selected_card: usize,
     width: usize,
     row_delta: isize,
 ) -> usize {
-    let rows = wrap_hand(language, hand, width.max(1));
+    let rows = wrap_hand_indexed(language, hand, first_index, width.max(1));
     let Some((row_index, item_index)) = rows.iter().enumerate().find_map(|(row_index, row)| {
         row.iter()
             .position(|(index, _)| *index == selected_card)
@@ -94,9 +101,23 @@ mod tests {
             Card::new(Color::Blue, Rank::Number(2)),
             Card::new(Color::Green, Rank::Number(3)),
         ];
-        let rows = wrap_hand(Language::English, &hand, 16);
+        let rows = wrap_hand_indexed(Language::English, &hand, 0, 16);
         assert!(rows.len() > 1);
-        assert_eq!(adjacent_hand_card(Language::English, &hand, 1, 16, -1), 0);
+        assert_eq!(
+            adjacent_hand_card(Language::English, &hand, 0, 1, 16, -1),
+            0
+        );
+    }
+
+    #[test]
+    fn indexed_window_keeps_global_visible_numbers() {
+        let hand = vec![
+            Card::new(Color::Red, Rank::Number(1)),
+            Card::new(Color::Blue, Rank::Number(2)),
+        ];
+        let rows = wrap_hand_indexed(Language::English, &hand, 999_999, 80);
+        assert_eq!(rows[0][0].0, 999_999);
+        assert!(rows[0][0].1.starts_with(" 1000000:"));
     }
 
     #[test]
