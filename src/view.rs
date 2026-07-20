@@ -18,6 +18,7 @@ pub struct AppView<'a> {
 impl<'a> AppView<'a> {
     pub fn new(app: &'a App, images_allowed: bool) -> Self {
         let overlays = app.pending_wild.is_some()
+            || app.pending_plus_batch.is_some()
             || app.pending_seven.is_some()
             || matches!(
                 app.screen,

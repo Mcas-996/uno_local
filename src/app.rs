@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use crate::ai::{Difficulty, choose_action};
 use crate::core::{
     Action, Card, Color, DeckVariant, EventKind, Game, GameEvent, HandEffect, HouseRules,
-    PlayerDrawRule, PlayerId, Rank,
+    PlayerDrawRule, PlayerId, PlusPlay, Rank,
 };
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -122,6 +122,12 @@ pub struct PendingSeven {
     pub selected_target: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingPlusBatch {
+    pub player_index: usize,
+    pub plays: Vec<PlusPlay>,
+}
+
 pub struct App {
     pub language: Language,
     pub screen: Screen,
@@ -135,6 +141,7 @@ pub struct App {
     pub command: String,
     pub pending_wild: Option<PendingWild>,
     pub pending_seven: Option<PendingSeven>,
+    pub pending_plus_batch: Option<PendingPlusBatch>,
     pub selected_color: usize,
     pub logs: VecDeque<String>,
     pub status: String,
@@ -165,6 +172,7 @@ impl App {
             command: String::new(),
             pending_wild: None,
             pending_seven: None,
+            pending_plus_batch: None,
             selected_color: 0,
             logs: VecDeque::new(),
             status: String::new(),
@@ -229,6 +237,7 @@ impl App {
         self.command_mode = false;
         self.pending_wild = None;
         self.pending_seven = None;
+        self.pending_plus_batch = None;
         self.logs.clear();
         self.update_turn_status();
         self.ai_deadline = Instant::now() + AI_DELAY;
@@ -270,6 +279,7 @@ impl App {
         if self.screen != Screen::Game
             || self.pending_wild.is_some()
             || self.pending_seven.is_some()
+            || self.pending_plus_batch.is_some()
             || self.command_mode
         {
             return;
@@ -408,6 +418,10 @@ impl App {
             self.handle_color_key(key);
             return;
         }
+        if self.pending_plus_batch.is_some() {
+            self.handle_plus_batch_color_key(key);
+            return;
+        }
         if self.pending_seven.is_some() {
             self.handle_seven_target_key(key);
             return;
@@ -422,6 +436,7 @@ impl App {
                 self.hand_filter = self.hand_filter.next();
                 self.selected_cards = [0; 2];
             }
+            KeyCode::Char('g' | 'G') => self.play_best_plus_batch(),
             KeyCode::Char('d' | 'D') if self.setup.mode == PlayMode::Single => {
                 self.submit_current_human(Action::Draw)
             }
@@ -551,6 +566,67 @@ impl App {
         }
     }
 
+    fn play_best_plus_batch(&mut self) {
+        let Some(player_index) = self.current_human_index() else {
+            return;
+        };
+        let player = self.human_ids[player_index].clone();
+        let result = self
+            .game
+            .as_ref()
+            .expect("game screen has game")
+            .best_plus_batch(&player);
+        let plays = match result {
+            Ok(plays) if plays.is_empty() => {
+                self.status = self.language.text(Message::NoPlayablePlusBatch).to_owned();
+                return;
+            }
+            Ok(plays) => plays,
+            Err(error) => {
+                self.status = self.language.game_error(&error);
+                return;
+            }
+        };
+        if plays
+            .last()
+            .is_some_and(|play| play.card.rank == Rank::WildDrawSixteen)
+        {
+            self.pending_plus_batch = Some(PendingPlusBatch {
+                player_index,
+                plays,
+            });
+            self.selected_color = 0;
+        } else {
+            self.submit_plus_batch(player_index, plays);
+        }
+    }
+
+    fn handle_plus_batch_color_key(&mut self, key: KeyEvent) {
+        let Some(pending) = self.pending_plus_batch.as_ref() else {
+            return;
+        };
+        let player_index = pending.player_index;
+        let navigation = self
+            .player_navigation(key)
+            .filter(|(candidate, _)| *candidate == player_index)
+            .map(|(_, code)| code)
+            .unwrap_or(key.code);
+        match navigation {
+            KeyCode::Left => self.selected_color = self.selected_color.saturating_sub(1),
+            KeyCode::Right => self.selected_color = (self.selected_color + 1).min(3),
+            KeyCode::Esc => self.pending_plus_batch = None,
+            KeyCode::Enter => {
+                if let Some(mut pending) = self.pending_plus_batch.take() {
+                    if let Some(last) = pending.plays.last_mut() {
+                        last.chosen_color = Some(Color::ALL[self.selected_color]);
+                    }
+                    self.submit_plus_batch(pending.player_index, pending.plays);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn handle_seven_target_key(&mut self, key: KeyEvent) {
         let Some(pending) = self.pending_seven.as_ref() else {
             return;
@@ -665,6 +741,18 @@ impl App {
         }
     }
 
+    fn submit_plus_batch(&mut self, player_index: usize, plays: Vec<PlusPlay>) {
+        let result = self
+            .game
+            .as_mut()
+            .expect("game screen has game")
+            .apply_plus_batch(&self.human_ids[player_index], plays);
+        match result {
+            Ok(event) => self.after_event(event),
+            Err(error) => self.status = self.language.game_error(&error),
+        }
+    }
+
     fn take_ai_turn(&mut self) {
         let (player, action) = {
             let game = self.game.as_ref().expect("game screen has game");
@@ -704,6 +792,7 @@ impl App {
             .iter()
             .find(|candidate| match &event.kind {
                 EventKind::CardPlayed { player, .. }
+                | EventKind::PlusBatchPlayed { player, .. }
                 | EventKind::CardDrawn { player, .. }
                 | EventKind::TurnPassed { player }
                 | EventKind::GameWon { player } => &candidate.id == player,
@@ -743,6 +832,21 @@ impl App {
             }
             EventKind::CardDrawn { .. } => {
                 format!("{name} {}", self.language.text(Message::DrewCard))
+            }
+            EventKind::PlusBatchPlayed {
+                cards,
+                target,
+                penalty,
+                drawn,
+                ..
+            } => {
+                let target_name = state
+                    .players
+                    .iter()
+                    .find(|player| player.id == target)
+                    .map_or(target.0.as_str(), |player| player.name.as_str());
+                self.language
+                    .plus_batch_log(&name, cards.len(), target_name, penalty, drawn)
             }
             EventKind::TurnPassed { .. } => {
                 format!("{name} {}", self.language.text(Message::Passed))
@@ -807,6 +911,7 @@ impl App {
         self.command_mode = false;
         self.pending_wild = None;
         self.pending_seven = None;
+        self.pending_plus_batch = None;
         self.logs.clear();
         self.status.clear();
     }
@@ -1113,6 +1218,89 @@ mod tests {
             Card::new(Color::Red, Rank::DrawEight)
         );
         assert_eq!(app.selected_cards[0], 0);
+    }
+
+    #[test]
+    fn g_uses_the_full_hand_and_prompts_only_when_the_batch_ends_in_plus_sixteen() {
+        let mut app = App::new(Language::English);
+        app.setup.bot_count = 1;
+        app.start_match().unwrap();
+        let human = app.human_ids[0].clone();
+        let target = app.ai_ids[0].clone();
+        let before = app.game.as_ref().unwrap().hand_for(&target).unwrap().len();
+        app.game.as_mut().unwrap().set_test_turn(
+            &human,
+            vec![
+                Card::new(Color::Red, Rank::DrawTwo),
+                Card::wild(Rank::WildDrawSixteen),
+                Card::new(Color::Yellow, Rank::Number(1)),
+            ],
+            Card::new(Color::Red, Rank::Number(5)),
+        );
+        app.hand_filter = HandFilter::Negative;
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE), 80);
+
+        assert!(app.pending_plus_batch.is_some());
+        assert_eq!(app.human_hand(0).unwrap().len(), 3);
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), 80);
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), 80);
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 80);
+
+        assert!(app.pending_plus_batch.is_none());
+        assert_eq!(
+            app.game.as_ref().unwrap().public_state().active_color,
+            Color::Green
+        );
+        assert_eq!(
+            app.game.as_ref().unwrap().hand_for(&target).unwrap().len(),
+            before + 18
+        );
+        assert_eq!(app.human_hand(0).unwrap().len(), 1);
+        assert!(
+            app.logs
+                .back()
+                .unwrap()
+                .contains("auto-played 2 plus cards")
+        );
+    }
+
+    #[test]
+    fn g_auto_uses_an_intermediate_plus_sixteen_and_reports_when_none_are_playable() {
+        let mut app = App::new(Language::English);
+        app.setup.bot_count = 1;
+        app.start_match().unwrap();
+        let human = app.human_ids[0].clone();
+        app.game.as_mut().unwrap().set_test_turn(
+            &human,
+            vec![
+                Card::new(Color::Red, Rank::DrawEight),
+                Card::wild(Rank::WildDrawSixteen),
+                Card::new(Color::Blue, Rank::DrawTwo),
+                Card::new(Color::Green, Rank::DrawTwo),
+                Card::new(Color::Yellow, Rank::Number(1)),
+            ],
+            Card::new(Color::Red, Rank::Number(5)),
+        );
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE), 80);
+
+        assert!(app.pending_plus_batch.is_none());
+        assert_eq!(app.human_hand(0).unwrap().len(), 1);
+        assert!(
+            app.logs
+                .back()
+                .unwrap()
+                .contains("auto-played 4 plus cards")
+        );
+
+        app.game.as_mut().unwrap().set_test_turn(
+            &human,
+            vec![Card::new(Color::Blue, Rank::DrawTwo)],
+            Card::new(Color::Red, Rank::Number(5)),
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE), 80);
+        assert_eq!(app.status, app.language.text(Message::NoPlayablePlusBatch));
     }
 
     #[test]

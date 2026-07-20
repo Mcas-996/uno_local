@@ -57,6 +57,10 @@ impl Language {
             Message::DiscardTop => ("Discard", "弃牌"),
             Message::YourHand => ("Your hand", "你的手牌"),
             Message::NoMatchingCards => ("No matching cards", "没有匹配的牌"),
+            Message::NoPlayablePlusBatch => (
+                "No +2/+8/+16 sequence can be played",
+                "没有可连续打出的 +2/+8/+16",
+            ),
             Message::EventLog => ("Events", "事件"),
             Message::Turn => ("Turn", "当前回合"),
             Message::ActiveColor => ("Active color", "当前颜色"),
@@ -70,8 +74,8 @@ impl Language {
             ),
             Message::Help => ("Help", "帮助"),
             Message::HelpBody => (
-                "* STAR CARNIVAL *\n\nShortcuts\n  Arrows/hjkl select  Enter play\n  F filter             D draw / P pass\n  : command            Q quit\n\nHand filter\n  F cycles All, +, -, and 0/7\n  Visible cards are renumbered from 1\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n  WILD -32: 66+ cards; discard 32, share 12\n  WILD -64: 132+ cards; discard 64, share 24\n\nCommands\n  play <visible index>  draw  pass\n  help                  new   quit\n\nPress ? or Esc to return.",
-                "* 星光嘉年华 *\n\n快捷键\n  方向键/hjkl 选择手牌  Enter 出牌\n  F 筛选               D 摸牌 / P 跳过\n  : 输入命令           Q 退出\n\n手牌筛选\n  F 循环：全部、+、-、0/7\n  可见牌从 1 开始重新编号\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n  变色 -32：66+ 张；弃 32 张，均分 12 张\n  变色 -64：132+ 张；弃 64 张，均分 24 张\n\n命令\n  play <可见序号>  draw  pass\n  help              new   quit\n\n按 ? 或 Esc 返回。",
+                "* STAR CARNIVAL *\n\nShortcuts\n  Arrows/hjkl select  Enter play\n  F filter             D draw / P pass\n  G auto +2/+8/+16     : command  Q quit\n\nHand filter\n  F cycles All, +, -, and 0/7\n  Visible cards are renumbered from 1\n\nAuto plus\n  G plays the longest legal +2/+8/+16 sequence\n  Intermediate +16 cards bridge colors\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n  WILD -32: 66+ cards; discard 32, share 12\n  WILD -64: 132+ cards; discard 64, share 24\n\nCommands\n  play <visible index>  draw  pass\n  help                  new   quit\n\nPress ? or Esc to return.",
+                "* 星光嘉年华 *\n\n快捷键\n  方向键/hjkl 选择手牌  Enter 出牌\n  F 筛选               D 摸牌 / P 跳过\n  G 自动出 +2/+8/+16   : 输入命令  Q 退出\n\n手牌筛选\n  F 循环：全部、+、-、0/7\n  可见牌从 1 开始重新编号\n\n自动出加牌\n  G 打出最长合法 +2/+8/+16 组合\n  中间的 +16 可用于切换颜色\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n  变色 -32：66+ 张；弃 32 张，均分 12 张\n  变色 -64：132+ 张；弃 64 张，均分 24 张\n\n命令\n  play <可见序号>  draw  pass\n  help              new   quit\n\n按 ? 或 Esc 返回。",
             ),
             Message::QuitTitle => ("Leave match?", "退出对局？"),
             Message::QuitBody => ("Y confirm · N/Esc cancel", "Y 确认 · N/Esc 取消"),
@@ -128,10 +132,10 @@ impl Language {
             (Self::English, PlayMode::Single) => self.text(Message::HelpBody),
             (Self::Chinese, PlayMode::Single) => self.text(Message::HelpBody),
             (Self::English, PlayMode::Dual) => {
-                "* STAR CARNIVAL *\n\nTwo-player shortcuts\n  Left:    WASD select\n  Right:   hjkl select\n  Current: arrows select\n  Enter play   X draw   P pass\n  F filter     : command   Q quit\n\nHand filter\n  F cycles All, +, -, and 0/7\n  Both hands use visible indices from 1\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n  WILD -32: 66+ cards; discard 32, share 12\n  WILD -64: 132+ cards; discard 64, share 24\n\nCommands act for the current player and use visible indices.\nPress ? or Esc to return."
+                "* STAR CARNIVAL *\n\nTwo-player shortcuts\n  Left:    WASD select\n  Right:   hjkl select\n  Current: arrows select\n  Enter play   X draw   P pass\n  F filter     G auto +2/+8/+16\n  : command    Q quit\n\nAuto plus\n  G plays the current player's longest legal sequence\n  Intermediate +16 cards bridge colors\n\nHand filter\n  F cycles All, +, -, and 0/7\n  Both hands use visible indices from 1\n\n7-0 rule\n  7 swaps hands; 0 rotates hands\n\nHoliday\n  +8 matches color/rank\n  WILD +16 changes color\n  WILD -32: 66+ cards; discard 32, share 12\n  WILD -64: 132+ cards; discard 64, share 24\n\nCommands act for the current player and use visible indices.\nPress ? or Esc to return."
             }
             (Self::Chinese, PlayMode::Dual) => {
-                "* 星光嘉年华 *\n\n双人快捷键\n  左侧：WASD 选择手牌\n  右侧：hjkl 选择手牌\n  当前玩家：方向键选择手牌\n  Enter 出牌  X 摸牌  P 跳过\n  F 筛选      : 输入命令  Q 退出\n\n手牌筛选\n  F 循环：全部、+、-、0/7\n  双方可见牌均从 1 开始编号\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n  变色 -32：66+ 张；弃 32 张，均分 12 张\n  变色 -64：132+ 张；弃 64 张，均分 24 张\n\n命令作用于当前玩家并使用可见序号。\n按 ? 或 Esc 返回。"
+                "* 星光嘉年华 *\n\n双人快捷键\n  左侧：WASD 选择手牌\n  右侧：hjkl 选择手牌\n  当前玩家：方向键选择手牌\n  Enter 出牌  X 摸牌  P 跳过\n  F 筛选      G 自动出 +2/+8/+16\n  : 输入命令  Q 退出\n\n自动出加牌\n  G 打出当前玩家的最长合法组合\n  中间的 +16 可用于切换颜色\n\n手牌筛选\n  F 循环：全部、+、-、0/7\n  双方可见牌均从 1 开始编号\n\n7-0 规则\n  7 交换手牌；0 轮转手牌\n\n节日牌\n  +8 匹配颜色或牌面\n  变色 +16 可改变颜色\n  变色 -32：66+ 张；弃 32 张，均分 12 张\n  变色 -64：132+ 张；弃 64 张，均分 24 张\n\n命令作用于当前玩家并使用可见序号。\n按 ? 或 Esc 返回。"
             }
         }
     }
@@ -139,17 +143,15 @@ impl Language {
     pub fn game_hint(self, mode: PlayMode) -> &'static str {
         match (self, mode) {
             (Self::English, PlayMode::Single) => {
-                "Enter play · F filter · D draw · P pass · ? help · Q quit"
+                "Enter play · G +2/8/16 · F filter · D draw · P pass · ? help · Q quit"
             }
             (Self::Chinese, PlayMode::Single) => {
-                "Enter 出牌 · F 筛选 · D 摸牌 · P 跳过 · ? 帮助 · Q 退出"
+                "G:+2/8/16 F筛选 Enter出牌 D摸牌 P跳过 ?帮助 Q退出"
             }
             (Self::English, PlayMode::Dual) => {
-                "Enter play · F filter · X draw · P pass · ? help · Q quit"
+                "Enter play · G +2/8/16 · F filter · X draw · P pass · ? help · Q quit"
             }
-            (Self::Chinese, PlayMode::Dual) => {
-                "Enter 出牌 · F 筛选 · X 摸牌 · P 跳过 · ? 帮助 · Q 退出"
-            }
+            (Self::Chinese, PlayMode::Dual) => "G:+2/8/16 F筛选 Enter出牌 X摸牌 P跳过 ?帮助 Q退出",
         }
     }
 
@@ -207,6 +209,30 @@ impl Language {
             Self::Chinese => {
                 format!("{played}，弃置 {discarded} 张牌并向其他玩家均分 {distributed} 张牌")
             }
+        }
+    }
+
+    pub fn plus_batch_log(
+        self,
+        player: &str,
+        cards: usize,
+        target: &str,
+        penalty: usize,
+        drawn: usize,
+    ) -> String {
+        match self {
+            Self::English if drawn == penalty => {
+                format!("{player} auto-played {cards} plus cards; {target} drew {penalty}")
+            }
+            Self::English => format!(
+                "{player} auto-played {cards} plus cards; {target} drew {drawn} of {penalty}"
+            ),
+            Self::Chinese if drawn == penalty => {
+                format!("{player} 自动打出 {cards} 张加牌；{target} 摸 {penalty} 张")
+            }
+            Self::Chinese => format!(
+                "{player} 自动打出 {cards} 张加牌；{target} 应摸 {penalty} 张，实际摸 {drawn} 张"
+            ),
         }
     }
 
@@ -365,6 +391,10 @@ impl Language {
                 Self::English => "No cards are available to draw; pass instead",
                 Self::Chinese => "已经无牌可摸，请直接跳过",
             },
+            GameError::EmptyPlusBatch | GameError::InvalidPlusBatch => match self {
+                Self::English => "That +2/+8/+16 sequence cannot be played",
+                Self::Chinese => "这组 +2/+8/+16 无法连续打出",
+            },
             _ => match self {
                 Self::English => "Action rejected",
                 Self::Chinese => "操作被拒绝",
@@ -396,6 +426,7 @@ pub enum Message {
     DiscardTop,
     YourHand,
     NoMatchingCards,
+    NoPlayablePlusBatch,
     EventLog,
     Turn,
     ActiveColor,

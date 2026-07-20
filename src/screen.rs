@@ -257,7 +257,7 @@ pub fn render(app: &App, backend: GraphicsBackend, viewport: Viewport) -> Canvas
             app.language.text(Message::QuitBody),
         ),
     }
-    if app.pending_wild.is_some() {
+    if app.pending_wild.is_some() || app.pending_plus_batch.is_some() {
         let colors = Color::ALL
             .into_iter()
             .enumerate()
@@ -270,7 +270,15 @@ pub fn render(app: &App, backend: GraphicsBackend, viewport: Viewport) -> Canvas
             })
             .collect::<Vec<_>>()
             .join("  ");
-        let player_index = app.pending_wild.map_or(0, |pending| pending.player_index);
+        let player_index = app
+            .pending_wild
+            .map(|pending| pending.player_index)
+            .or_else(|| {
+                app.pending_plus_batch
+                    .as_ref()
+                    .map(|pending| pending.player_index)
+            })
+            .unwrap_or(0);
         render_compact_overlay(
             &mut canvas,
             app.language.text(Message::ChooseColor),
@@ -849,7 +857,7 @@ mod tests {
 
         assert!(text.contains("*Left [WASD/Arrows]"));
         assert!(text.contains("Right [hjkl]"));
-        assert!(text.contains("Enter play · F filter · X draw · P pass"));
+        assert!(text.contains("Enter play · G +2/8/16 · F filter · X draw · P pass"));
         assert_eq!(game.images.len(), 2);
 
         let right = app.human_ids[1].clone();

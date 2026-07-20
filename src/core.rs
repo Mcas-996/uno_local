@@ -2,7 +2,7 @@
 //!
 //! UNO cards, deck variants, rules, turn state, and game events.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
 use rand::rngs::{OsRng, StdRng};
@@ -221,6 +221,18 @@ pub enum Action {
     Pass,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlusPlay {
+    pub card: Card,
+    pub chosen_color: Option<Color>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct IndexedPlusPlay {
+    hand_index: usize,
+    play: PlusPlay,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HandEffect {
     Swap {
@@ -243,6 +255,14 @@ pub enum EventKind {
         card: Card,
         chosen_color: Option<Color>,
         hand_effect: Option<HandEffect>,
+    },
+    PlusBatchPlayed {
+        player: PlayerId,
+        cards: Vec<Card>,
+        target: PlayerId,
+        penalty: usize,
+        drawn: usize,
+        final_color: Color,
     },
     CardDrawn {
         player: PlayerId,
@@ -319,6 +339,8 @@ pub enum GameError {
     CannotPassBeforeDrawing,
     GameAlreadyWon,
     EmptyDrawPile,
+    EmptyPlusBatch,
+    InvalidPlusBatch,
 }
 
 impl fmt::Display for GameError {
@@ -590,6 +612,116 @@ impl Game {
             TurnPhase::AwaitingAction | TurnPhase::Drew(_) => Action::Pass,
         });
         Ok(actions)
+    }
+
+    /// Plans the longest legal sequence containing only +2, +8, and WILD +16.
+    ///
+    /// The returned order is deterministic. Intermediate wild cards already carry
+    /// the color needed by the continuation; when the final card is wild its color
+    /// is left unset so the frontend can ask the player.
+    pub fn best_plus_batch(&self, player: &PlayerId) -> Result<Vec<PlusPlay>, GameError> {
+        self.ensure_turn(player)?;
+        if self.winner.is_some() {
+            return Err(GameError::GameAlreadyWon);
+        }
+
+        let hand = &self.player(player)?.hand;
+        let mut indexed = hand.iter().copied().enumerate();
+        let candidates = match self.phase {
+            TurnPhase::AwaitingAction => indexed
+                .filter(|(_, card)| is_plus_batch_card(*card))
+                .map(indexed_plus_play)
+                .collect::<Vec<_>>(),
+            TurnPhase::Drew(drawn) if is_plus_batch_card(drawn) => indexed
+                .find(|(_, card)| *card == drawn)
+                .map(indexed_plus_play)
+                .into_iter()
+                .collect(),
+            TurnPhase::Drew(_) => Vec::new(),
+        };
+        if candidates.len() > 63 {
+            return Err(GameError::InvalidPlusBatch);
+        }
+
+        let top = *self.discard_pile.last().expect("discard always has a top");
+        let mut memo = HashMap::new();
+        let mut best = best_plus_suffix(&candidates, 0, self.active_color, top, &mut memo);
+        if let Some(last) = best.last_mut()
+            && last.play.card.rank == Rank::WildDrawSixteen
+        {
+            last.play.chosen_color = None;
+        }
+        Ok(best.into_iter().map(|entry| entry.play).collect())
+    }
+
+    /// Atomically applies a frontend-planned +2/+8/+16 sequence.
+    pub fn apply_plus_batch(
+        &mut self,
+        player: &PlayerId,
+        plays: Vec<PlusPlay>,
+    ) -> Result<GameEvent, GameError> {
+        self.ensure_turn(player)?;
+        if self.winner.is_some() {
+            return Err(GameError::GameAlreadyWon);
+        }
+        if plays.is_empty() {
+            return Err(GameError::EmptyPlusBatch);
+        }
+        if let TurnPhase::Drew(drawn) = self.phase
+            && (plays.len() != 1 || plays[0].card != drawn)
+        {
+            return Err(GameError::InvalidPlusBatch);
+        }
+
+        let player_index = self.player_index(player)?;
+        let mut remaining = self.players[player_index].hand.clone();
+        let mut active_color = self.active_color;
+        let mut top = *self.discard_pile.last().expect("discard always has a top");
+        for play in &plays {
+            if !is_plus_batch_card(play.card)
+                || !plus_card_is_playable(active_color, top, play.card)
+            {
+                return Err(GameError::InvalidPlusBatch);
+            }
+            let Some(owned_index) = remaining.iter().position(|card| *card == play.card) else {
+                return Err(GameError::CardNotOwned(play.card));
+            };
+            remaining.remove(owned_index);
+            match (play.card.rank, play.chosen_color) {
+                (Rank::WildDrawSixteen, Some(color)) => active_color = color,
+                (Rank::WildDrawSixteen, None) => return Err(GameError::MissingColorChoice),
+                (_, Some(_)) => return Err(GameError::UnexpectedColorChoice),
+                (_, None) => active_color = play.card.color.expect("colored plus card"),
+            }
+            top = play.card;
+        }
+
+        self.players[player_index].hand = remaining;
+        self.discard_pile.extend(plays.iter().map(|play| play.card));
+        self.active_color = active_color;
+        self.phase = TurnPhase::AwaitingAction;
+        let penalty = plays.iter().map(|play| plus_penalty(play.card)).sum();
+        self.advance_turn(1);
+        let target = self.current_player().clone();
+        let drawn = self.draw_available_cards_to_player(&target, penalty);
+        self.advance_turn(1);
+
+        let won = self.players[player_index].hand.is_empty();
+        let event = self.push_event(EventKind::PlusBatchPlayed {
+            player: player.clone(),
+            cards: plays.into_iter().map(|play| play.card).collect(),
+            target,
+            penalty,
+            drawn,
+            final_color: active_color,
+        });
+        if won {
+            self.winner = Some(player.clone());
+            self.push_event(EventKind::GameWon {
+                player: player.clone(),
+            });
+        }
+        Ok(event)
     }
 
     pub fn apply_action(
@@ -1016,6 +1148,109 @@ impl Game {
         self.events.push(event.clone());
         event
     }
+}
+
+fn is_plus_batch_card(card: Card) -> bool {
+    matches!(
+        card.rank,
+        Rank::DrawTwo | Rank::DrawEight | Rank::WildDrawSixteen
+    )
+}
+
+fn indexed_plus_play((hand_index, card): (usize, Card)) -> IndexedPlusPlay {
+    IndexedPlusPlay {
+        hand_index,
+        play: PlusPlay {
+            card,
+            chosen_color: None,
+        },
+    }
+}
+
+fn plus_penalty(card: Card) -> usize {
+    match card.rank {
+        Rank::DrawTwo => 2,
+        Rank::DrawEight => 8,
+        Rank::WildDrawSixteen => 16,
+        _ => 0,
+    }
+}
+
+fn plus_card_is_playable(active_color: Color, top: Card, card: Card) -> bool {
+    card.rank == Rank::WildDrawSixteen
+        || card.color == Some(active_color)
+        || (!top.is_wild() && card.rank == top.rank)
+}
+
+fn best_plus_suffix(
+    candidates: &[IndexedPlusPlay],
+    used: u64,
+    active_color: Color,
+    top: Card,
+    memo: &mut HashMap<(u64, Color, Card), Vec<IndexedPlusPlay>>,
+) -> Vec<IndexedPlusPlay> {
+    if let Some(cached) = memo.get(&(used, active_color, top)) {
+        return cached.clone();
+    }
+
+    let mut best = Vec::new();
+    for (candidate_index, candidate) in candidates.iter().copied().enumerate() {
+        let bit = 1_u64 << candidate_index;
+        if used & bit != 0 || !plus_card_is_playable(active_color, top, candidate.play.card) {
+            continue;
+        }
+        let colors: &[Color] = if candidate.play.card.rank == Rank::WildDrawSixteen {
+            &Color::ALL
+        } else {
+            std::slice::from_ref(
+                candidate
+                    .play
+                    .card
+                    .color
+                    .as_ref()
+                    .expect("colored plus card"),
+            )
+        };
+        for chosen_color in colors {
+            let mut entry = candidate;
+            if entry.play.card.rank == Rank::WildDrawSixteen {
+                entry.play.chosen_color = Some(*chosen_color);
+            }
+            let mut path = vec![entry];
+            path.extend(best_plus_suffix(
+                candidates,
+                used | bit,
+                *chosen_color,
+                entry.play.card,
+                memo,
+            ));
+            if plus_path_is_better(&path, &best) {
+                best = path;
+            }
+        }
+    }
+    memo.insert((used, active_color, top), best.clone());
+    best
+}
+
+fn plus_path_is_better(candidate: &[IndexedPlusPlay], current: &[IndexedPlusPlay]) -> bool {
+    let candidate_penalty = candidate
+        .iter()
+        .map(|entry| plus_penalty(entry.play.card))
+        .sum::<usize>();
+    let current_penalty = current
+        .iter()
+        .map(|entry| plus_penalty(entry.play.card))
+        .sum::<usize>();
+    candidate.len() > current.len()
+        || (candidate.len() == current.len() && candidate_penalty > current_penalty)
+        || (candidate.len() == current.len()
+            && candidate_penalty == current_penalty
+            && candidate
+                .iter()
+                .map(|entry| entry.hand_index)
+                .cmp(current.iter().map(|entry| entry.hand_index))
+                .is_lt())
 }
 
 fn runtime_refill_seed() -> [u8; 32] {
@@ -1613,6 +1848,151 @@ mod tests {
         assert_eq!(game.active_color, Color::Green);
         assert_eq!(game.hand_for(&target).unwrap().len(), before + 16);
         assert_eq!(game.current_player(), &current);
+    }
+
+    #[test]
+    fn plus_batch_planner_uses_wild_as_a_color_bridge_and_excludes_plus_four() {
+        let mut game = game();
+        let current = game.current_player().clone();
+        let plus_four = Card::wild(Rank::WildDrawFour);
+        game.set_test_turn(
+            &current,
+            vec![
+                Card::new(Color::Blue, Rank::DrawTwo),
+                Card::new(Color::Red, Rank::DrawEight),
+                Card::wild(Rank::WildDrawSixteen),
+                Card::new(Color::Green, Rank::DrawTwo),
+                plus_four,
+            ],
+            Card::new(Color::Red, Rank::Number(5)),
+        );
+
+        let plays = game.best_plus_batch(&current).unwrap();
+
+        assert_eq!(plays.len(), 4);
+        assert!(!plays.iter().any(|play| play.card == plus_four));
+        let wild_index = plays
+            .iter()
+            .position(|play| play.card.rank == Rank::WildDrawSixteen)
+            .unwrap();
+        assert!(wild_index + 1 < plays.len());
+        assert_eq!(
+            plays[wild_index].chosen_color,
+            plays[wild_index + 1].card.color
+        );
+    }
+
+    #[test]
+    fn plus_batch_after_drawing_can_only_plan_one_matching_card_value() {
+        let mut game = game();
+        let current = game.current_player().clone();
+        let drawn = Card::new(Color::Red, Rank::DrawTwo);
+        game.set_test_turn(
+            &current,
+            vec![drawn, drawn, Card::new(Color::Blue, Rank::DrawTwo)],
+            Card::new(Color::Red, Rank::Number(5)),
+        );
+        game.phase = TurnPhase::Drew(drawn);
+
+        let plays = game.best_plus_batch(&current).unwrap();
+
+        assert_eq!(plays.len(), 1);
+        assert_eq!(plays[0].card, drawn);
+    }
+
+    #[test]
+    fn plus_batch_draws_the_sum_skips_once_and_still_penalizes_on_a_win() {
+        let mut game = Game::new_seeded(players(3), DeckVariant::Standard, 70).unwrap();
+        let current = game.current_player().clone();
+        let target = game.players[1].id.clone();
+        let after_target = game.players[2].id.clone();
+        let before = game.hand_for(&target).unwrap().len();
+        let red = Card::new(Color::Red, Rank::DrawTwo);
+        let blue = Card::new(Color::Blue, Rank::DrawTwo);
+        game.set_test_turn(
+            &current,
+            vec![red, blue],
+            Card::new(Color::Red, Rank::Number(5)),
+        );
+
+        let event = game
+            .apply_plus_batch(
+                &current,
+                vec![
+                    PlusPlay {
+                        card: red,
+                        chosen_color: None,
+                    },
+                    PlusPlay {
+                        card: blue,
+                        chosen_color: None,
+                    },
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(game.hand_for(&target).unwrap().len(), before + 4);
+        assert_eq!(game.current_player(), &after_target);
+        assert_eq!(game.public_state().winner, Some(current.clone()));
+        assert!(matches!(
+            event.kind,
+            EventKind::PlusBatchPlayed {
+                player,
+                target: event_target,
+                penalty: 4,
+                drawn: 4,
+                final_color: Color::Blue,
+                ..
+            } if player == current && event_target == target
+        ));
+    }
+
+    #[test]
+    fn invalid_plus_batch_is_atomic_and_final_wild_sets_the_selected_color() {
+        let mut game = game();
+        let current = game.current_player().clone();
+        let red = Card::new(Color::Red, Rank::DrawTwo);
+        let blue = Card::new(Color::Blue, Rank::DrawEight);
+        let wild = Card::wild(Rank::WildDrawSixteen);
+        let remaining = Card::new(Color::Yellow, Rank::Number(1));
+        game.set_test_turn(
+            &current,
+            vec![red, blue, wild, remaining],
+            Card::new(Color::Red, Rank::Number(5)),
+        );
+        let before_hand = game.hand_for(&current).unwrap().to_vec();
+        let before_state = game.public_state();
+
+        assert_eq!(
+            game.apply_plus_batch(
+                &current,
+                vec![PlusPlay {
+                    card: blue,
+                    chosen_color: None,
+                }],
+            )
+            .unwrap_err(),
+            GameError::InvalidPlusBatch
+        );
+        assert_eq!(game.hand_for(&current).unwrap(), before_hand);
+        assert_eq!(game.public_state(), before_state);
+
+        game.apply_plus_batch(
+            &current,
+            vec![
+                PlusPlay {
+                    card: red,
+                    chosen_color: None,
+                },
+                PlusPlay {
+                    card: wild,
+                    chosen_color: Some(Color::Green),
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(game.public_state().active_color, Color::Green);
+        assert_eq!(game.hand_for(&current).unwrap(), &[blue, remaining]);
     }
 
     #[test]
