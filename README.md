@@ -61,7 +61,7 @@ Only a matching cargo-dist installation is removed. Package-manager, Cargo, deve
 
 UNO chooses its terminal frontend automatically. Local WezTerm sessions use the native Termwiz image path. Other local terminals use the universal text/Sixel frontend and enable images only after confirming Sixel support. SSH and tmux sessions always use text for predictable remote behavior. A terminal size of at least `70 × 26` is recommended.
 
-The optional 130-card Holiday deck adds two `WILD x!` and two `WILD sqrt` cards. Factorial changes the next player's `x` cards to `min(x!, x^7, 1,000,000)` and skips them. Square Root randomly reduces your remaining hand to `floor(sqrt(x))` cards and also skips the next player. Both cards are wild and require a color choice.
+The optional 130-card Holiday deck adds two `WILD x!` and two `WILD sqrt` cards. Factorial changes the next player's `x` cards to `min(x!, x^15, 2,100,000,000)` and skips them. Square Root randomly reduces your remaining hand to `floor(sqrt(x))` cards and also skips the next player. Both cards are wild and require a color choice.
 
 Large hands keep their exact total count but load at most 200 concrete cards at once. At the bottom of a hand page, press Down five times to load the next random page; at the top, press Up five times to regenerate the previous page. A regenerated page intentionally does not preserve the card identities shown there before. Human guarantee rules and AI difficulty guarantees/exclusions still apply to generated pages.
 

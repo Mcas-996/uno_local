@@ -1500,10 +1500,10 @@ fn runtime_refill_seed() -> [u8; 32] {
     seed
 }
 
-const MAX_FACTORIAL_HAND_SIZE: usize = 1_000_000;
+const MAX_FACTORIAL_HAND_SIZE: usize = 2_100_000_000;
 
 pub(crate) fn factorial_hand_size(cards: usize) -> usize {
-    let power_cap = (0..7).try_fold(1_usize, |value, _| {
+    let power_cap = (0..15).try_fold(1_usize, |value, _| {
         value
             .checked_mul(cards)
             .filter(|result| *result < MAX_FACTORIAL_HAND_SIZE)
@@ -1782,8 +1782,10 @@ mod tests {
         assert_eq!(factorial_hand_size(5), 120);
         assert_eq!(factorial_hand_size(8), 40_320);
         assert_eq!(factorial_hand_size(9), 362_880);
-        assert_eq!(factorial_hand_size(10), 1_000_000);
-        assert_eq!(factorial_hand_size(usize::MAX), 1_000_000);
+        assert_eq!(factorial_hand_size(10), 3_628_800);
+        assert_eq!(factorial_hand_size(12), 479_001_600);
+        assert_eq!(factorial_hand_size(13), MAX_FACTORIAL_HAND_SIZE);
+        assert_eq!(factorial_hand_size(usize::MAX), MAX_FACTORIAL_HAND_SIZE);
     }
 
     #[test]
@@ -1847,7 +1849,7 @@ mod tests {
     }
 
     #[test]
-    fn factorial_materializes_the_one_million_card_cap() {
+    fn factorial_virtualizes_the_two_point_one_billion_card_cap() {
         let mut game = Game::new_seeded(players(3), DeckVariant::Holiday, 43).unwrap();
         let actor = game.players[0].id.clone();
         game.current_index = 0;
@@ -1855,14 +1857,9 @@ mod tests {
             Card::wild(Rank::WildFactorial),
             Card::new(Color::Blue, Rank::Number(1)),
         ];
-        game.players[1].hand = (0..10)
+        game.players[1].hand = (0..13)
             .map(|number| Card::new(Color::Red, Rank::Number(number)))
             .collect();
-        game.draw_pile = std::iter::repeat_n(
-            Card::new(Color::Yellow, Rank::Number(3)),
-            MAX_FACTORIAL_HAND_SIZE - 10,
-        )
-        .collect();
         game.discard_pile = vec![Card::new(Color::Yellow, Rank::Number(7))];
         game.active_color = Color::Yellow;
 

@@ -50,6 +50,7 @@ pub enum HandFilter {
     Positive,
     Negative,
     SevenZero,
+    Mathematical,
 }
 
 impl HandFilter {
@@ -58,7 +59,8 @@ impl HandFilter {
             Self::All => Self::Positive,
             Self::Positive => Self::Negative,
             Self::Negative => Self::SevenZero,
-            Self::SevenZero => Self::All,
+            Self::SevenZero => Self::Mathematical,
+            Self::Mathematical => Self::All,
         }
     }
 
@@ -74,6 +76,9 @@ impl HandFilter {
                 Rank::WildDiscardThirtyTwo | Rank::WildDiscardSixtyFour
             ),
             Self::SevenZero => matches!(card.rank, Rank::Number(0 | 7)),
+            Self::Mathematical => {
+                matches!(card.rank, Rank::WildFactorial | Rank::WildSquareRoot)
+            }
         }
     }
 }
@@ -1386,9 +1391,16 @@ mod tests {
         for rank in [Rank::Number(0), Rank::Number(7)] {
             assert!(HandFilter::SevenZero.matches(colored(rank)));
         }
+        for card in [
+            Card::wild(Rank::WildFactorial),
+            Card::wild(Rank::WildSquareRoot),
+        ] {
+            assert!(HandFilter::Mathematical.matches(card));
+        }
         assert!(!HandFilter::Positive.matches(colored(Rank::Number(7))));
         assert!(!HandFilter::Negative.matches(Card::wild(Rank::WildDrawSixteen)));
         assert!(!HandFilter::SevenZero.matches(colored(Rank::Number(1))));
+        assert!(!HandFilter::Mathematical.matches(Card::wild(Rank::WildDrawFour)));
     }
 
     #[test]
@@ -1491,6 +1503,8 @@ mod tests {
                 Card::new(Color::Blue, Rank::DrawTwo),
                 Card::wild(Rank::WildDiscardThirtyTwo),
                 Card::new(Color::Green, Rank::Number(7)),
+                Card::wild(Rank::WildFactorial),
+                Card::wild(Rank::WildSquareRoot),
             ],
             Card::new(Color::Red, Rank::Number(5)),
         );
@@ -1517,8 +1531,18 @@ mod tests {
             vec![Card::new(Color::Green, Rank::Number(7))]
         );
         app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE), 80);
+        assert_eq!(app.hand_filter, HandFilter::Mathematical);
+        assert_eq!(
+            app.visible_human_hand(0),
+            vec![
+                Card::wild(Rank::WildFactorial),
+                Card::wild(Rank::WildSquareRoot),
+            ]
+        );
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE), 80);
         assert_eq!(app.hand_filter, HandFilter::All);
-        assert_eq!(app.visible_human_hand(0).len(), 4);
+        assert_eq!(app.visible_human_hand(0).len(), 6);
 
         app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE), 80);
         app.start_match().unwrap();
